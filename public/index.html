@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nova — Voice Demo Guide</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <!-- The "product" being demoed: a full Google-style account sign-up form. -->
+      <main class="product">
+        <form id="signup" class="signup" novalidate>
+          <div class="brand">
+            <span class="b">G</span><span class="r">o</span><span class="y">o</span
+            ><span class="b">g</span><span class="g">l</span><span class="r">e</span>
+          </div>
+          <h1>Create your Google Account</h1>
+          <p class="sub">Enter your details to get started.</p>
+
+          <div class="row">
+            <div class="field">
+              <label for="firstName">First name</label>
+              <input id="firstName" type="text" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="lastName">Last name</label>
+              <input id="lastName" type="text" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="username">Username</label>
+            <div class="at">
+              <input id="username" type="text" autocomplete="off" />
+              <span class="suffix">@gmail.com</span>
+            </div>
+            <div class="hint">You can use letters, numbers and dots.</div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="password">Password</label>
+              <input id="password" type="password" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="confirm">Confirm</label>
+              <input id="confirm" type="password" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field" style="flex: 0.7">
+              <label for="day">Day</label>
+              <input id="day" type="text" autocomplete="off" />
+            </div>
+            <div class="field" style="flex: 1.4">
+              <label>Month</label>
+              <div class="dropdown" id="dd-month">
+                <button type="button" class="dd-btn" id="dd-month-btn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="dd-value placeholder">Month</span>
+                  <span class="dd-caret">&#9662;</span>
+                </button>
+                <ul class="dd-list" role="listbox">
+                  <li class="dd-opt" data-value="January" role="option">January</li>
+                  <li class="dd-opt" data-value="February" role="option">February</li>
+                  <li class="dd-opt" data-value="March" role="option">March</li>
+                  <li class="dd-opt" data-value="April" role="option">April</li>
+                  <li class="dd-opt" data-value="May" role="option">May</li>
+                  <li class="dd-opt" data-value="June" role="option">June</li>
+                  <li class="dd-opt" data-value="July" role="option">July</li>
+                  <li class="dd-opt" data-value="August" role="option">August</li>
+                  <li class="dd-opt" data-value="September" role="option">September</li>
+                  <li class="dd-opt" data-value="October" role="option">October</li>
+                  <li class="dd-opt" data-value="November" role="option">November</li>
+                  <li class="dd-opt" data-value="December" role="option">December</li>
+                </ul>
+                <input type="hidden" id="month-input" value="" />
+              </div>
+            </div>
+            <div class="field" style="flex: 0.9">
+              <label for="year">Year</label>
+              <input id="year" type="text" autocomplete="off" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Gender</label>
+            <div class="dropdown" id="dd-gender">
+              <button type="button" class="dd-btn" id="dd-gender-btn" aria-haspopup="listbox" aria-expanded="false">
+                <span class="dd-value placeholder">Select</span>
+                <span class="dd-caret">&#9662;</span>
+              </button>
+              <ul class="dd-list" role="listbox">
+                <li class="dd-opt" data-value="Female" role="option">Female</li>
+                <li class="dd-opt" data-value="Male" role="option">Male</li>
+                <li class="dd-opt" data-value="Rather not say" role="option">Rather not say</li>
+                <li class="dd-opt" data-value="Custom" role="option">Custom</li>
+              </ul>
+              <input type="hidden" id="gender-input" value="" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="phone">Phone number</label>
+            <input id="phone" type="text" autocomplete="off" />
+            <div class="hint">We'll use this to keep your account secure.</div>
+          </div>
+
+          <div class="field">
+            <label for="recovery">Recovery email</label>
+            <input id="recovery" type="text" autocomplete="off" />
+            <div class="hint">In case you get locked out. Optional, but recommended.</div>
+          </div>
+
+          <div class="field">
+            <label>Country / region</label>
+            <div class="dropdown" id="dd-country">
+              <button type="button" class="dd-btn" id="dd-country-btn" aria-haspopup="listbox" aria-expanded="false">
+                <span class="dd-value placeholder">Select</span>
+                <span class="dd-caret">&#9662;</span>
+              </button>
+              <ul class="dd-list" role="listbox">
+                <li class="dd-opt" data-value="Spain" role="option">Spain</li>
+                <li class="dd-opt" data-value="United States" role="option">United States</li>
+                <li class="dd-opt" data-value="United Kingdom" role="option">United Kingdom</li>
+                <li class="dd-opt" data-value="Germany" role="option">Germany</li>
+                <li class="dd-opt" data-value="France" role="option">France</li>
+                <li class="dd-opt" data-value="Mexico" role="option">Mexico</li>
+              </ul>
+              <input type="hidden" id="country-input" value="" />
+            </div>
+          </div>
+
+          <label class="check" id="terms-field">
+            <input id="terms" type="checkbox" />
+            <span>I agree to the Terms of Service and Privacy Policy.</span>
+          </label>
+
+          <div class="actions">
+            <a class="link">Sign in instead</a>
+            <button id="submit" type="submit" class="submit">Create Account</button>
+          </div>
+
+          <div class="success" id="success"></div>
+        </form>
+      </main>
+
+      <!-- The voice guide control + status panel -->
+      <aside class="guide">
+        <div class="guide-head">
+          <span id="orb" class="orb idle"></span>
+          <div>
+            <div class="guide-title">Voice Guide</div>
+            <div id="status" class="status">Idle</div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button id="startBtn" class="primary">Start demo</button>
+          <button id="nextBtn" disabled>Next step</button>
+          <button id="repeatBtn" disabled>Repeat</button>
+          <button id="stopBtn" disabled>Stop</button>
+        </div>
+
+        <p class="hint">
+          The guide fills in the form itself, like a real person — the cursor glides over,
+          types, and opens the menus. Speak any time and it stops to listen, then picks up
+          where it left off. Go quiet and it'll check whether you want it to carry on. Say
+          "next" to skip ahead or "stop" to end. Tip: use headphones so it doesn't hear its
+          own voice.
+        </p>
+
+        <div class="transcript" id="transcript" aria-live="polite"></div>
+      </aside>
+    </div>
+
+    <!-- The product form's own behaviour: custom dropdowns + submit validation. -->
+    <script>
+      // Custom dropdowns: open/close and store the value in the hidden input.
+      document.querySelectorAll(".dropdown").forEach(function (dd) {
+        var btn = dd.querySelector(".dd-btn");
+        var val = dd.querySelector(".dd-value");
+        var input = dd.querySelector('input[type="hidden"]');
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          document.querySelectorAll(".dropdown.open").forEach(function (o) {
+            if (o !== dd) {
+              o.classList.remove("open");
+              o.querySelector(".dd-btn").setAttribute("aria-expanded", "false");
+            }
+          });
+          dd.classList.toggle("open");
+          btn.setAttribute("aria-expanded", dd.classList.contains("open"));
+        });
+        dd.querySelectorAll(".dd-opt").forEach(function (opt) {
+          opt.addEventListener("click", function () {
+            val.textContent = opt.textContent;
+            val.classList.remove("placeholder");
+            input.value = opt.getAttribute("data-value");
+            dd.classList.remove("open");
+            btn.setAttribute("aria-expanded", "false");
+          });
+        });
+      });
+      document.addEventListener("click", function (e) {
+        document.querySelectorAll(".dropdown").forEach(function (dd) {
+          if (!dd.contains(e.target)) {
+            dd.classList.remove("open");
+            dd.querySelector(".dd-btn").setAttribute("aria-expanded", "false");
+          }
+        });
+      });
+
+      // Submit: validate and show confirmation (no backend; it's a controlled mock).
+      document.getElementById("signup").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var v = function (id) {
+          return (document.getElementById(id).value || "").trim();
+        };
+        var box = document.getElementById("success");
+        var first = v("firstName"),
+          last = v("lastName"),
+          user = v("username"),
+          pass = v("password"),
+          conf = v("confirm"),
+          month = v("month-input"),
+          gender = v("gender-input"),
+          country = v("country-input"),
+          terms = document.getElementById("terms").checked;
+        box.classList.remove("error");
+        if (!first || !last || !user || !pass || !month || !gender || !country) {
+          box.textContent = "Some fields are still missing.";
+          box.classList.add("error", "show");
+          return;
+        }
+        if (pass !== conf) {
+          box.textContent = "The passwords don't match.";
+          box.classList.add("error", "show");
+          return;
+        }
+        if (!terms) {
+          box.textContent = "Please accept the Terms of Service to continue.";
+          box.classList.add("error", "show");
+          return;
+        }
+        box.textContent =
+          "Google Account created: " + user + "@gmail.com. Welcome, " + first + "!";
+        box.classList.add("show");
+        box.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    </script>
+
+    <script src="/human.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

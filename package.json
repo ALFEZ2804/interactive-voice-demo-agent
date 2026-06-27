@@ -1,0 +1,17 @@
+{
+  "name": "karumi-voice-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive voice demo guide (Claude API brain + ElevenLabs voice) with real-time barge-in",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "ws": "^8.21.0"
+  }
+}
