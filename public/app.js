@@ -359,6 +359,9 @@ function rememberPlaceholders() {
 }
 
 function resetForm() {
+  // The product (e.g. the CRM) can expose its own reset; it runs on every (re)start so a
+  // replay starts from a clean state (no duplicated contacts, deals back to seed, etc.).
+  if (typeof window.__resetProduct === "function") window.__resetProduct();
   const form = document.getElementById("signup");
   if (!form) return;
   form

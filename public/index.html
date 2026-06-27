@@ -3,150 +3,128 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nova — Voice Demo Guide</title>
+    <title>Nova — CRM Voice Demo</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="layout">
-      <!-- The "product" being demoed: a full Google-style account sign-up form. -->
+      <!-- The "product" being demoed: a single-page sales CRM. Views switch in JS so the
+           voice session (and its WebSocket) is never torn down by a page navigation. -->
       <main class="product">
-        <form id="signup" class="signup" novalidate>
-          <div class="brand">
-            <span class="b">G</span><span class="r">o</span><span class="y">o</span
-            ><span class="b">g</span><span class="g">l</span><span class="r">e</span>
-          </div>
-          <h1>Create your Google Account</h1>
-          <p class="sub">Enter your details to get started.</p>
+        <nav class="crm-nav">
+          <div class="crm-brand"><span class="crm-dot"></span> Pipeline CRM</div>
+          <button type="button" class="nav-item active" id="nav-dashboard" data-view="dashboard">Dashboard</button>
+          <button type="button" class="nav-item" id="nav-contacts" data-view="contacts">Contacts</button>
+          <button type="button" class="nav-item" id="nav-pipeline" data-view="pipeline">Opportunities</button>
+          <button type="button" class="nav-item" id="nav-comms" data-view="comms">Communications</button>
+        </nav>
 
-          <div class="row">
-            <div class="field">
-              <label for="firstName">First name</label>
-              <input id="firstName" type="text" autocomplete="off" />
+        <section class="crm-main">
+          <!-- ===== DASHBOARD ===== -->
+          <div class="view active" id="view-dashboard">
+            <div class="view-head">
+              <h2>Dashboard</h2>
+              <p>Your pipeline at a glance.</p>
             </div>
-            <div class="field">
-              <label for="lastName">Last name</label>
-              <input id="lastName" type="text" autocomplete="off" />
+            <div class="kpi-row" id="kpi-row">
+              <div class="kpi"><div class="kpi-n" id="kpi-open">0</div><div class="kpi-l">Open deals</div></div>
+              <div class="kpi"><div class="kpi-n" id="kpi-value">€0</div><div class="kpi-l">Pipeline value</div></div>
+              <div class="kpi"><div class="kpi-n" id="kpi-won">0</div><div class="kpi-l">Won this month</div></div>
+              <div class="kpi"><div class="kpi-n" id="kpi-rate">0%</div><div class="kpi-l">Win rate</div></div>
             </div>
-          </div>
-
-          <div class="field">
-            <label for="username">Username</label>
-            <div class="at">
-              <input id="username" type="text" autocomplete="off" />
-              <span class="suffix">@gmail.com</span>
-            </div>
-            <div class="hint">You can use letters, numbers and dots.</div>
-          </div>
-
-          <div class="row">
-            <div class="field">
-              <label for="password">Password</label>
-              <input id="password" type="password" autocomplete="off" />
-            </div>
-            <div class="field">
-              <label for="confirm">Confirm</label>
-              <input id="confirm" type="password" autocomplete="off" />
+            <div class="card">
+              <div class="card-title">Value by stage</div>
+              <div class="barchart" id="barchart"></div>
             </div>
           </div>
 
-          <div class="row">
-            <div class="field" style="flex: 0.7">
-              <label for="day">Day</label>
-              <input id="day" type="text" autocomplete="off" />
+          <!-- ===== CONTACTS ===== -->
+          <div class="view" id="view-contacts">
+            <div class="view-head">
+              <h2>Contacts</h2>
+              <p>Everyone you're working with.</p>
             </div>
-            <div class="field" style="flex: 1.4">
-              <label>Month</label>
-              <div class="dropdown" id="dd-month">
-                <button type="button" class="dd-btn" id="dd-month-btn" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="dd-value placeholder">Month</span>
-                  <span class="dd-caret">&#9662;</span>
-                </button>
-                <ul class="dd-list" role="listbox">
-                  <li class="dd-opt" data-value="January" role="option">January</li>
-                  <li class="dd-opt" data-value="February" role="option">February</li>
-                  <li class="dd-opt" data-value="March" role="option">March</li>
-                  <li class="dd-opt" data-value="April" role="option">April</li>
-                  <li class="dd-opt" data-value="May" role="option">May</li>
-                  <li class="dd-opt" data-value="June" role="option">June</li>
-                  <li class="dd-opt" data-value="July" role="option">July</li>
-                  <li class="dd-opt" data-value="August" role="option">August</li>
-                  <li class="dd-opt" data-value="September" role="option">September</li>
-                  <li class="dd-opt" data-value="October" role="option">October</li>
-                  <li class="dd-opt" data-value="November" role="option">November</li>
-                  <li class="dd-opt" data-value="December" role="option">December</li>
-                </ul>
-                <input type="hidden" id="month-input" value="" />
+            <div class="toolbar">
+              <button type="button" class="btn btn-primary" id="btn-new-contact">+ New contact</button>
+            </div>
+            <table class="crm-table" id="contacts-table">
+              <thead>
+                <tr><th>Name</th><th>Company</th><th>Email</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody id="contacts-body"><!-- rendered by JS --></tbody>
+            </table>
+          </div>
+
+          <!-- ===== OPPORTUNITIES (PIPELINE) ===== -->
+          <div class="view" id="view-pipeline">
+            <div class="view-head">
+              <h2>Opportunities</h2>
+              <p>Deals by stage.</p>
+            </div>
+            <div class="pipeline-board" id="pipeline-board"><!-- rendered by JS --></div>
+          </div>
+
+          <!-- ===== COMMUNICATIONS ===== -->
+          <div class="view" id="view-comms">
+            <div class="view-head">
+              <h2>Communications</h2>
+              <p>Draft a follow-up email — written for you, editable, previewed live.</p>
+            </div>
+            <div class="comms-panel" id="comms-panel">
+              <div class="comms-controls">
+                <div class="field">
+                  <label>Contact</label>
+                  <div class="dropdown" id="dd-comms-contact">
+                    <button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false">
+                      <span class="dd-value placeholder">Select contact</span>
+                      <span class="dd-caret">&#9662;</span>
+                    </button>
+                    <ul class="dd-list" role="listbox" id="comms-contact-list"><!-- rendered by JS --></ul>
+                    <input type="hidden" id="comms-contact-input" value="" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Email type</label>
+                  <div class="dropdown" id="dd-email-type">
+                    <button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false">
+                      <span class="dd-value">Follow-up</span>
+                      <span class="dd-caret">&#9662;</span>
+                    </button>
+                    <ul class="dd-list" role="listbox">
+                      <li class="dd-opt" data-value="Follow-up" role="option">Follow-up</li>
+                      <li class="dd-opt" data-value="Check-in" role="option">Check-in</li>
+                      <li class="dd-opt" data-value="Thank-you" role="option">Thank-you</li>
+                    </ul>
+                    <input type="hidden" id="email-type-input" value="Follow-up" />
+                  </div>
+                </div>
+                <button type="button" class="btn btn-primary" id="btn-draft">✦ Draft with AI</button>
+              </div>
+
+              <div class="comms-editor">
+                <div class="editor-pane">
+                  <div class="field">
+                    <label for="email-subject">Subject</label>
+                    <input id="email-subject" type="text" autocomplete="off" placeholder="Subject line" />
+                  </div>
+                  <div class="field">
+                    <label for="email-body">Body</label>
+                    <textarea id="email-body" rows="9" placeholder="Pick a contact and draft an email, or write your own."></textarea>
+                  </div>
+                </div>
+                <div class="preview-pane">
+                  <div class="preview-label">Live preview</div>
+                  <div class="email-preview" id="email-preview">
+                    <div class="email-empty">Your email preview will appear here.</div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="field" style="flex: 0.9">
-              <label for="year">Year</label>
-              <input id="year" type="text" autocomplete="off" />
-            </div>
           </div>
-
-          <div class="field">
-            <label>Gender</label>
-            <div class="dropdown" id="dd-gender">
-              <button type="button" class="dd-btn" id="dd-gender-btn" aria-haspopup="listbox" aria-expanded="false">
-                <span class="dd-value placeholder">Select</span>
-                <span class="dd-caret">&#9662;</span>
-              </button>
-              <ul class="dd-list" role="listbox">
-                <li class="dd-opt" data-value="Female" role="option">Female</li>
-                <li class="dd-opt" data-value="Male" role="option">Male</li>
-                <li class="dd-opt" data-value="Rather not say" role="option">Rather not say</li>
-                <li class="dd-opt" data-value="Custom" role="option">Custom</li>
-              </ul>
-              <input type="hidden" id="gender-input" value="" />
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="phone">Phone number</label>
-            <input id="phone" type="text" autocomplete="off" />
-            <div class="hint">We'll use this to keep your account secure.</div>
-          </div>
-
-          <div class="field">
-            <label for="recovery">Recovery email</label>
-            <input id="recovery" type="text" autocomplete="off" />
-            <div class="hint">In case you get locked out. Optional, but recommended.</div>
-          </div>
-
-          <div class="field">
-            <label>Country / region</label>
-            <div class="dropdown" id="dd-country">
-              <button type="button" class="dd-btn" id="dd-country-btn" aria-haspopup="listbox" aria-expanded="false">
-                <span class="dd-value placeholder">Select</span>
-                <span class="dd-caret">&#9662;</span>
-              </button>
-              <ul class="dd-list" role="listbox">
-                <li class="dd-opt" data-value="Spain" role="option">Spain</li>
-                <li class="dd-opt" data-value="United States" role="option">United States</li>
-                <li class="dd-opt" data-value="United Kingdom" role="option">United Kingdom</li>
-                <li class="dd-opt" data-value="Germany" role="option">Germany</li>
-                <li class="dd-opt" data-value="France" role="option">France</li>
-                <li class="dd-opt" data-value="Mexico" role="option">Mexico</li>
-              </ul>
-              <input type="hidden" id="country-input" value="" />
-            </div>
-          </div>
-
-          <label class="check" id="terms-field">
-            <input id="terms" type="checkbox" />
-            <span>I agree to the Terms of Service and Privacy Policy.</span>
-          </label>
-
-          <div class="actions">
-            <a class="link">Sign in instead</a>
-            <button id="submit" type="submit" class="submit">Create Account</button>
-          </div>
-
-          <div class="success" id="success"></div>
-        </form>
+        </section>
       </main>
 
-      <!-- The voice guide control + status panel -->
+      <!-- The voice guide control + status panel (unchanged contract: app.js needs these ids) -->
       <aside class="guide">
         <div class="guide-head">
           <span id="orb" class="orb idle"></span>
@@ -164,91 +142,355 @@
         </div>
 
         <p class="hint">
-          The guide fills in the form itself, like a real person — the cursor glides over,
-          types, and opens the menus. Speak any time and it stops to listen, then picks up
-          where it left off. Go quiet and it'll check whether you want it to carry on. Say
-          "next" to skip ahead or "stop" to end. Tip: use headphones so it doesn't hear its
-          own voice.
+          The guide drives the CRM itself, like a real person — the cursor glides over, clicks,
+          types, and opens menus. Speak any time and it stops to listen, then picks up where it
+          left off. Go quiet and it'll check whether you want it to carry on. Say "next" to skip
+          ahead or "stop" to end. Tip: use headphones so it doesn't hear its own voice.
         </p>
 
         <div class="transcript" id="transcript" aria-live="polite"></div>
       </aside>
     </div>
 
-    <!-- The product form's own behaviour: custom dropdowns + submit validation. -->
+    <!-- Edit / new contact modal -->
+    <div class="modal-backdrop" id="contact-modal">
+      <div class="modal">
+        <h3 id="cm-title">New contact</h3>
+        <div class="field">
+          <label for="cm-name">Name</label>
+          <input id="cm-name" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="cm-company">Company</label>
+          <input id="cm-company" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="cm-email">Email</label>
+          <input id="cm-email" type="text" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <div class="dropdown" id="dd-cm-status">
+            <button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false">
+              <span class="dd-value placeholder">Select</span>
+              <span class="dd-caret">&#9662;</span>
+            </button>
+            <ul class="dd-list" role="listbox">
+              <li class="dd-opt" data-value="Lead" role="option">Lead</li>
+              <li class="dd-opt" data-value="Qualified" role="option">Qualified</li>
+              <li class="dd-opt" data-value="Customer" role="option">Customer</li>
+              <li class="dd-opt" data-value="Churned" role="option">Churned</li>
+            </ul>
+            <input type="hidden" id="cm-status-input" value="" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="cm-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="cm-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The CRM's own behaviour: custom dropdowns, view switching, modal, pipeline, AI draft. -->
     <script>
-      // Custom dropdowns: open/close and store the value in the hidden input.
-      document.querySelectorAll(".dropdown").forEach(function (dd) {
-        var btn = dd.querySelector(".dd-btn");
+      // ---- Sample data (all made-up) ------------------------------------------
+      var SEED_CONTACTS = [
+        { name: "Aisha Khan",  company: "Globex",     email: "aisha@globex.com",   status: "Lead" },
+        { name: "Tom Rivera",  company: "Northwind",  email: "tom@northwind.co",   status: "Qualified" },
+        { name: "Sarah Chen",  company: "Acme Corp",  email: "sarah@acme.com",     status: "Customer" },
+      ];
+      var STAGES = ["Lead", "Qualified", "Proposal", "Won"];
+      var SEED_DEALS = [
+        { company: "Globex",    value: 8000,  stage: "Lead" },
+        { company: "Acme Corp", value: 24000, stage: "Qualified", demo: true },
+        { company: "Northwind", value: 15000, stage: "Proposal" },
+        { company: "Initech",   value: 30000, stage: "Won" },
+      ];
+
+      var contacts = SEED_CONTACTS.map(function (c) { return Object.assign({}, c); });
+      var deals = SEED_DEALS.map(function (d) { return Object.assign({}, d); });
+      var editingIndex = -1;
+
+      // ---- Custom dropdown wiring (reusable so dynamic options work too) -------
+      function wireOption(dd, opt) {
         var val = dd.querySelector(".dd-value");
+        var btn = dd.querySelector(".dd-btn");
         var input = dd.querySelector('input[type="hidden"]');
+        opt.addEventListener("click", function () {
+          val.textContent = opt.textContent;
+          val.classList.remove("placeholder");
+          if (input) input.value = opt.getAttribute("data-value");
+          dd.classList.remove("open");
+          btn.setAttribute("aria-expanded", "false");
+        });
+      }
+      function wireDropdown(dd) {
+        var btn = dd.querySelector(".dd-btn");
         btn.addEventListener("click", function (e) {
           e.stopPropagation();
           document.querySelectorAll(".dropdown.open").forEach(function (o) {
-            if (o !== dd) {
-              o.classList.remove("open");
-              o.querySelector(".dd-btn").setAttribute("aria-expanded", "false");
-            }
+            if (o !== dd) { o.classList.remove("open"); o.querySelector(".dd-btn").setAttribute("aria-expanded", "false"); }
           });
           dd.classList.toggle("open");
           btn.setAttribute("aria-expanded", dd.classList.contains("open"));
         });
-        dd.querySelectorAll(".dd-opt").forEach(function (opt) {
-          opt.addEventListener("click", function () {
-            val.textContent = opt.textContent;
-            val.classList.remove("placeholder");
-            input.value = opt.getAttribute("data-value");
-            dd.classList.remove("open");
-            btn.setAttribute("aria-expanded", "false");
-          });
-        });
-      });
+        dd.querySelectorAll(".dd-opt").forEach(function (opt) { wireOption(dd, opt); });
+      }
+      document.querySelectorAll(".dropdown").forEach(wireDropdown);
       document.addEventListener("click", function (e) {
         document.querySelectorAll(".dropdown").forEach(function (dd) {
-          if (!dd.contains(e.target)) {
-            dd.classList.remove("open");
-            dd.querySelector(".dd-btn").setAttribute("aria-expanded", "false");
-          }
+          if (!dd.contains(e.target)) { dd.classList.remove("open"); dd.querySelector(".dd-btn").setAttribute("aria-expanded", "false"); }
         });
       });
+      function setDropdownValue(dd, value) {
+        var val = dd.querySelector(".dd-value");
+        var input = dd.querySelector('input[type="hidden"]');
+        var opt = dd.querySelector('.dd-opt[data-value="' + value + '"]');
+        if (val) {
+          if (value && opt) { val.textContent = opt.textContent; val.classList.remove("placeholder"); }
+          else { val.textContent = val.dataset.placeholder || "Select"; val.classList.add("placeholder"); }
+        }
+        if (input) input.value = value || "";
+      }
 
-      // Submit: validate and show confirmation (no backend; it's a controlled mock).
-      document.getElementById("signup").addEventListener("submit", function (e) {
-        e.preventDefault();
-        var v = function (id) {
-          return (document.getElementById(id).value || "").trim();
-        };
-        var box = document.getElementById("success");
-        var first = v("firstName"),
-          last = v("lastName"),
-          user = v("username"),
-          pass = v("password"),
-          conf = v("confirm"),
-          month = v("month-input"),
-          gender = v("gender-input"),
-          country = v("country-input"),
-          terms = document.getElementById("terms").checked;
-        box.classList.remove("error");
-        if (!first || !last || !user || !pass || !month || !gender || !country) {
-          box.textContent = "Some fields are still missing.";
-          box.classList.add("error", "show");
-          return;
-        }
-        if (pass !== conf) {
-          box.textContent = "The passwords don't match.";
-          box.classList.add("error", "show");
-          return;
-        }
-        if (!terms) {
-          box.textContent = "Please accept the Terms of Service to continue.";
-          box.classList.add("error", "show");
-          return;
-        }
-        box.textContent =
-          "Google Account created: " + user + "@gmail.com. Welcome, " + first + "!";
-        box.classList.add("show");
-        box.scrollIntoView({ behavior: "smooth", block: "center" });
+      // ---- View switching (single page, no navigation) ------------------------
+      function showView(name) {
+        document.querySelectorAll(".view").forEach(function (v) { v.classList.toggle("active", v.id === "view-" + name); });
+        document.querySelectorAll(".nav-item").forEach(function (n) { n.classList.toggle("active", n.dataset.view === name); });
+        if (name === "comms") buildContactDropdown();
+      }
+      document.querySelectorAll(".nav-item").forEach(function (n) {
+        n.addEventListener("click", function () { showView(n.dataset.view); });
       });
+
+      // ---- Contacts -----------------------------------------------------------
+      function statusBadge(status) {
+        var cls = ({ Lead: "lead", Qualified: "qualified", Customer: "customer", Churned: "churned" })[status] || "lead";
+        return '<span class="badge badge-' + cls + '">' + status + "</span>";
+      }
+      function renderContacts() {
+        var body = document.getElementById("contacts-body");
+        body.innerHTML = contacts.map(function (c, i) {
+          var editId = i === 0 ? ' id="row-edit-1"' : "";
+          return (
+            "<tr>" +
+            "<td>" + c.name + "</td>" +
+            "<td>" + c.company + "</td>" +
+            "<td>" + c.email + "</td>" +
+            "<td>" + statusBadge(c.status) + "</td>" +
+            '<td class="row-actions"><button type="button" class="icon-btn"' + editId +
+              ' data-edit="' + i + '" title="Edit">&#9998;</button></td>' +
+            "</tr>"
+          );
+        }).join("");
+        body.querySelectorAll("[data-edit]").forEach(function (b) {
+          b.addEventListener("click", function () { openContactModal(parseInt(b.dataset.edit, 10)); });
+        });
+      }
+
+      function openContactModal(index) {
+        editingIndex = (typeof index === "number" && index >= 0) ? index : -1;
+        var modal = document.getElementById("contact-modal");
+        var dd = document.getElementById("dd-cm-status");
+        if (editingIndex >= 0) {
+          var c = contacts[editingIndex];
+          document.getElementById("cm-title").textContent = "Edit contact";
+          document.getElementById("cm-name").value = c.name;
+          document.getElementById("cm-company").value = c.company;
+          document.getElementById("cm-email").value = c.email;
+          setDropdownValue(dd, c.status);
+        } else {
+          document.getElementById("cm-title").textContent = "New contact";
+          document.getElementById("cm-name").value = "";
+          document.getElementById("cm-company").value = "";
+          document.getElementById("cm-email").value = "";
+          setDropdownValue(dd, "");
+        }
+        modal.classList.add("open");
+      }
+      function closeContactModal() { document.getElementById("contact-modal").classList.remove("open"); }
+
+      document.getElementById("btn-new-contact").addEventListener("click", function () { openContactModal(-1); });
+      document.getElementById("cm-cancel").addEventListener("click", closeContactModal);
+      document.getElementById("contact-modal").addEventListener("click", function (e) {
+        if (e.target === this) closeContactModal();
+      });
+      document.getElementById("cm-save").addEventListener("click", function () {
+        var c = {
+          name: (document.getElementById("cm-name").value || "").trim() || "Unnamed",
+          company: (document.getElementById("cm-company").value || "").trim(),
+          email: (document.getElementById("cm-email").value || "").trim(),
+          status: document.getElementById("cm-status-input").value || "Lead",
+        };
+        if (editingIndex >= 0) contacts[editingIndex] = c;
+        else contacts.push(c);
+        renderContacts();
+        renderDashboard();
+        closeContactModal();
+      });
+
+      // ---- Communications: contact dropdown built from current contacts -------
+      function buildContactDropdown() {
+        var dd = document.getElementById("dd-comms-contact");
+        var list = document.getElementById("comms-contact-list");
+        var current = document.getElementById("comms-contact-input").value;
+        list.innerHTML = contacts.map(function (c) {
+          return '<li class="dd-opt" data-value="' + c.name + '" role="option">' + c.name + " · " + c.company + "</li>";
+        }).join("");
+        list.querySelectorAll(".dd-opt").forEach(function (opt) { wireOption(dd, opt); });
+        if (current && !contacts.some(function (c) { return c.name === current; })) setDropdownValue(dd, "");
+      }
+
+      // ---- Pipeline -----------------------------------------------------------
+      function euro(n) { return "€" + n.toLocaleString("en-US"); }
+      function renderPipeline() {
+        var board = document.getElementById("pipeline-board");
+        board.innerHTML = STAGES.map(function (stage) {
+          var inStage = deals.filter(function (d) { return d.stage === stage; });
+          var total = inStage.reduce(function (s, d) { return s + d.value; }, 0);
+          var cards = inStage.map(function (d) {
+            var di = deals.indexOf(d);
+            var canAdvance = STAGES.indexOf(d.stage) < STAGES.length - 1;
+            var advId = d.demo && canAdvance ? ' id="deal-advance-1"' : "";
+            var advBtn = canAdvance
+              ? '<button type="button" class="deal-advance"' + advId + ' data-deal="' + di + '" title="Advance to next stage">&#8594;</button>'
+              : "";
+            return (
+              '<div class="deal">' +
+              '<div class="deal-co">' + d.company + "</div>" +
+              '<div class="deal-row"><span class="deal-val">' + euro(d.value) + "</span>" + advBtn + "</div>" +
+              "</div>"
+            );
+          }).join("");
+          return (
+            '<div class="stage">' +
+            '<div class="stage-head"><span>' + stage + '</span><span class="stage-count">' + inStage.length + "</span></div>" +
+            '<div class="stage-total">' + euro(total) + "</div>" +
+            cards +
+            "</div>"
+          );
+        }).join("");
+        board.querySelectorAll("[data-deal]").forEach(function (b) {
+          b.addEventListener("click", function () { advanceDeal(parseInt(b.dataset.deal, 10)); });
+        });
+      }
+      function advanceDeal(index) {
+        var d = deals[index];
+        if (!d) return;
+        var i = STAGES.indexOf(d.stage);
+        if (i < STAGES.length - 1) { d.stage = STAGES[i + 1]; renderPipeline(); renderDashboard(); }
+      }
+
+      // ---- Dashboard ----------------------------------------------------------
+      function renderDashboard() {
+        var open = deals.filter(function (d) { return d.stage !== "Won"; });
+        var won = deals.filter(function (d) { return d.stage === "Won"; });
+        var openValue = open.reduce(function (s, d) { return s + d.value; }, 0);
+        var rate = deals.length ? Math.round((won.length / deals.length) * 100) : 0;
+        document.getElementById("kpi-open").textContent = open.length;
+        document.getElementById("kpi-value").textContent = euro(openValue);
+        document.getElementById("kpi-won").textContent = won.length;
+        document.getElementById("kpi-rate").textContent = rate + "%";
+
+        var byStage = STAGES.map(function (stage) {
+          return { stage: stage, total: deals.filter(function (d) { return d.stage === stage; }).reduce(function (s, d) { return s + d.value; }, 0) };
+        });
+        var max = Math.max.apply(null, byStage.map(function (b) { return b.total; }).concat([1]));
+        document.getElementById("barchart").innerHTML = byStage.map(function (b) {
+          var pct = Math.round((b.total / max) * 100);
+          return (
+            '<div class="bar-row"><span class="bar-label">' + b.stage + "</span>" +
+            '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%"></span></span>' +
+            '<span class="bar-val">' + euro(b.total) + "</span></div>"
+          );
+        }).join("");
+      }
+
+      // ---- Communications: AI draft + live preview ----------------------------
+      function escapeHtml(s) {
+        return (s || "").replace(/[&<>"']/g, function (c) {
+          return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+        });
+      }
+      function renderPreview() {
+        var name = document.getElementById("comms-contact-input").value;
+        var contact = contacts.filter(function (c) { return c.name === name; })[0];
+        var subject = document.getElementById("email-subject").value;
+        var bodyText = document.getElementById("email-body").value;
+        var box = document.getElementById("email-preview");
+        if (!subject && !bodyText) {
+          box.innerHTML = '<div class="email-empty">Your email preview will appear here.</div>';
+          return;
+        }
+        var to = contact ? escapeHtml(contact.name) + " &lt;" + escapeHtml(contact.email) + "&gt;" : "—";
+        var bodyHtml = escapeHtml(bodyText).replace(/\n/g, "<br>");
+        box.innerHTML =
+          '<div class="email-meta"><span class="email-to">To:</span> ' + to + "</div>" +
+          '<div class="email-subject">' + (escapeHtml(subject) || "(no subject)") + "</div>" +
+          '<div class="email-body">' + bodyHtml + "</div>";
+      }
+      document.getElementById("email-subject").addEventListener("input", renderPreview);
+      document.getElementById("email-body").addEventListener("input", renderPreview);
+
+      document.getElementById("btn-draft").addEventListener("click", function () {
+        var btn = this;
+        var name = document.getElementById("comms-contact-input").value;
+        var contact = contacts.filter(function (c) { return c.name === name; })[0];
+        if (!contact) contact = contacts[0];
+        if (!contact) return;
+        var type = document.getElementById("email-type-input").value || "Follow-up";
+
+        btn.disabled = true;
+        var oldLabel = btn.textContent;
+        btn.textContent = "Drafting…";
+        document.getElementById("email-subject").value = "";
+        document.getElementById("email-body").value = "";
+        document.getElementById("email-preview").innerHTML = '<div class="email-empty">Drafting your email…</div>';
+
+        fetch("/api/draft", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ contact: { name: contact.name, company: contact.company, status: contact.status }, type: type }),
+        })
+          .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t); }); })
+          .then(function (data) {
+            document.getElementById("email-subject").value = data.subject || "";
+            document.getElementById("email-body").value = data.body || "";
+            renderPreview();
+          })
+          .catch(function (err) {
+            document.getElementById("email-preview").innerHTML =
+              '<div class="email-empty">Couldn\'t draft the email. ' + escapeHtml(String(err.message || err)).slice(0, 160) + "</div>";
+          })
+          .finally(function () { btn.disabled = false; btn.textContent = oldLabel; });
+      });
+
+      // ---- Reset hook: app.js calls window.__resetProduct() on (re)start ------
+      function clearEmail() {
+        document.getElementById("email-subject").value = "";
+        document.getElementById("email-body").value = "";
+        setDropdownValue(document.getElementById("dd-comms-contact"), "");
+        setDropdownValue(document.getElementById("dd-email-type"), "Follow-up");
+        renderPreview();
+      }
+      window.__resetProduct = function () {
+        contacts = SEED_CONTACTS.map(function (c) { return Object.assign({}, c); });
+        deals = SEED_DEALS.map(function (d) { return Object.assign({}, d); });
+        editingIndex = -1;
+        closeContactModal();
+        renderContacts();
+        renderPipeline();
+        renderDashboard();
+        buildContactDropdown();
+        clearEmail();
+        showView("dashboard");
+      };
+
+      // ---- Initial render -----------------------------------------------------
+      renderContacts();
+      renderPipeline();
+      renderDashboard();
+      buildContactDropdown();
     </script>
 
     <script src="/human.js"></script>

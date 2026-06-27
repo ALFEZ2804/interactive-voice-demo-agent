@@ -4,149 +4,162 @@
 //   id        - stable identifier
 //   field     - DOM id of the element this step is about (for visual highlight); null = none
 //   narration - what the guide SAYS out loud for this step (spoken-style, short sentences)
-//   action(s) - what the guide DOES on the form for this step (it fills it in itself,
-//               human-like: the cursor glides over, types, opens dropdowns). Use `action`
-//               for one or `actions` for several in order:
-//                 { type: "type",  field, value }  -> types value into an input
+//   action(s) - what the guide DOES on the page for this step (it drives the CRM itself,
+//               human-like: the cursor glides over, clicks tabs, types, opens dropdowns).
+//               Use `action` for one or `actions` for several in order:
+//                 { type: "type",  field, value }  -> types value into an input (field = id)
 //                 { type: "pick",  field, value }  -> opens a custom dropdown and picks value
-//                 { type: "check", field }          -> ticks a checkbox
-//                 { type: "click", field }          -> clicks an element (e.g. submit)
+//                                                     (field = id of the .dropdown wrapper)
+//                 { type: "check", field }          -> ticks a checkbox (field = id)
+//                 { type: "click", field }          -> clicks an element (field = id)
 //               omit for steps with no on-screen action.
 //   context   - extra background the brain (Claude) can use to ANSWER questions about this
 //               step. Never spoken; only feeds the Q&A so answers stay on-topic.
+//
+// IMPORTANT (single-page app): a step that interacts with a view must FIRST click that
+// view's nav tab, because the human motor can't glide to an element that lives in a hidden
+// (display:none) view — its bounding box is zero. So view-changing steps lead with a
+// { click: nav-* } action before any type/pick/click on that view's elements.
 //
 // Keep narration short: it is read aloud and long monologues hurt voice latency.
 
 export const DEMO = {
   // Product being demoed — gives Claude global context for off-step questions.
   product:
-    "This is the Google Account sign-up form. A new user creates a Gmail account by " +
-    "entering their first and last name, choosing a username and password, giving their " +
-    "date of birth and gender, adding a phone number and a recovery email, picking their " +
-    "country, accepting the terms, and clicking Create Account.",
+    "This is a sales CRM — a tool a sales team uses to track the people and companies they " +
+    "sell to. It has a Dashboard with key numbers, a Contacts list where every record can be " +
+    "edited, an Opportunities pipeline that shows deals by stage, and a Communications screen " +
+    "that drafts follow-up emails for you with AI. All the data shown is made-up sample data.",
 
   steps: [
     {
       id: "welcome",
       field: null,
       narration:
-        "Hi! Let me show you how to create a Google account. I'll fill it in myself as I go, " +
+        "Hi! Let me give you a quick tour of this CRM. I'll click through it myself as I go, " +
         "and you can stop me any time to ask a question. Here we go.",
       action: null,
       context:
-        "This is the opening. It's the standard Google account sign-up. The guide fills the " +
-        "whole form itself, like a person would. The user can interrupt by speaking, or say " +
-        "'next' to skip ahead.",
+        "This is the opening of a guided tour of a sales CRM. The guide drives the app itself, " +
+        "like a person would. The user can interrupt by speaking, or say 'next' to skip ahead.",
     },
     {
-      id: "name",
-      field: "firstName",
-      narration: "First, your name — first name and last name.",
+      id: "dashboard",
+      field: "kpi-row",
+      narration:
+        "This is the dashboard — your whole pipeline at a glance: open deals, their total " +
+        "value, deals won this month, and your win rate.",
+      action: { type: "click", field: "nav-dashboard" },
+      context:
+        "The dashboard shows top-level numbers: number of open deals, total pipeline value in " +
+        "euros, deals won this month, and the win rate. Below it, a small chart breaks deal " +
+        "value down by stage. All figures are illustrative sample data, not real.",
+    },
+    {
+      id: "contacts",
+      field: "contacts-table",
+      narration:
+        "Over in Contacts you've got everyone you're working with — name, company, email and " +
+        "where they are in your funnel. Let me add a new one.",
+      action: { type: "click", field: "nav-contacts" },
+      context:
+        "The Contacts view is a table of people: name, company, email, and a status (Lead, " +
+        "Qualified, Customer or Churned). Each row can be opened and edited. There's a button " +
+        "to add a new contact.",
+    },
+    {
+      id: "new-contact",
+      field: "contact-modal",
+      narration:
+        "I'll pop in their name, company and email, mark them as a new lead, and save.",
       actions: [
-        { type: "type", field: "firstName", value: "Jane" },
-        { type: "type", field: "lastName", value: "Doe" },
+        { type: "click", field: "btn-new-contact" },
+        { type: "type", field: "cm-name", value: "Elena Ortiz" },
+        { type: "type", field: "cm-company", value: "Vertex Labs" },
+        { type: "type", field: "cm-email", value: "elena@vertexlabs.io" },
+        { type: "pick", field: "dd-cm-status", value: "Lead" },
+        { type: "click", field: "cm-save" },
       ],
       context:
-        "First name and last name are plain text fields. Both are required and shown on the " +
-        "account. Any name is accepted.",
+        "The new-contact form asks for name, company, email and a status chosen from a dropdown " +
+        "(Lead, Qualified, Customer, Churned). Saving adds the person to the contacts list. The " +
+        "details typed here are made-up sample data.",
     },
     {
-      id: "username",
-      field: "username",
-      narration: "Now we pick a username — this becomes your Gmail address.",
-      action: { type: "type", field: "username", value: "jane.doe.demo" },
-      context:
-        "The username becomes the email address, username@gmail.com. It can use letters, " +
-        "numbers and dots, and must be unique. It is required.",
-    },
-    {
-      id: "password",
-      field: "password",
-      narration: "Then a password, and we type it again to confirm it.",
+      id: "edit-contact",
+      field: "contacts-table",
+      narration:
+        "And every record is editable — let me open an existing contact and move them up to " +
+        "qualified.",
       actions: [
-        { type: "type", field: "password", value: "NovaDemo2026!" },
-        { type: "type", field: "confirm", value: "NovaDemo2026!" },
+        { type: "click", field: "row-edit-1" },
+        { type: "pick", field: "dd-cm-status", value: "Qualified" },
+        { type: "click", field: "cm-save" },
       ],
       context:
-        "Two password fields: the password and a confirmation that must match it. A strong " +
-        "password mixes letters, numbers and symbols. Both are required.",
+        "Any contact can be edited by clicking the pencil on its row, which opens the same form " +
+        "pre-filled. Here we change a contact's status to Qualified. Nothing here is permanent " +
+        "real data — it's a demo.",
     },
     {
-      id: "birthday",
-      field: "day",
-      narration: "Next, the date of birth — the day, the month, and the year.",
+      id: "pipeline",
+      field: "pipeline-board",
+      narration:
+        "This is the pipeline — your deals laid out by stage, from new leads all the way " +
+        "through to closed-won.",
+      action: { type: "click", field: "nav-pipeline" },
+      context:
+        "The Opportunities pipeline shows deals as cards in columns by stage: Lead, Qualified, " +
+        "Proposal and Won. Each card shows the company and the deal value. The column headers " +
+        "show how many deals are in each stage.",
+    },
+    {
+      id: "advance-deal",
+      field: "pipeline-board",
+      narration:
+        "As a deal moves forward, you push it along — let me move this one into proposal.",
+      action: { type: "click", field: "deal-advance-1" },
+      context:
+        "Each deal card has an arrow to advance it to the next stage. Advancing moves the card " +
+        "into the next column and updates the pipeline counts and totals.",
+    },
+    {
+      id: "comms",
+      field: "comms-panel",
+      narration:
+        "And here's the part I like most — communications. It writes your follow-up emails " +
+        "for you.",
+      action: { type: "click", field: "nav-comms" },
+      context:
+        "The Communications view drafts a follow-up email for a chosen contact using AI. You " +
+        "pick the contact and the kind of email, generate a draft, then edit it freely with a " +
+        "live preview of how it'll look before sending.",
+    },
+    {
+      id: "draft-email",
+      field: "comms-panel",
+      narration:
+        "Watch — I'll pick the contact I just added and have it write a follow-up. It's " +
+        "drafting it now.",
       actions: [
-        { type: "type", field: "day", value: "14" },
-        { type: "pick", field: "dd-month", value: "March" },
-        { type: "type", field: "year", value: "1996" },
+        { type: "pick", field: "dd-comms-contact", value: "Elena Ortiz" },
+        { type: "click", field: "btn-draft" },
       ],
       context:
-        "Date of birth has three parts: day and year are typed, the month is a dropdown menu. " +
-        "Google asks for it to confirm the account meets the minimum age. It is required.",
-    },
-    {
-      id: "gender",
-      field: "dd-gender",
-      narration: "Then the gender — I'll open the menu and choose.",
-      action: { type: "pick", field: "dd-gender", value: "Female" },
-      context:
-        "Gender is a dropdown: Female, Male, Rather not say, or Custom. It's required by the " +
-        "form. 'Rather not say' is there for anyone who prefers not to share it.",
-    },
-    {
-      id: "phone",
-      field: "phone",
-      narration: "A phone number now — it helps keep the account secure.",
-      action: { type: "type", field: "phone", value: "600 123 456" },
-      context:
-        "The phone number is used for security and account recovery, for example to verify " +
-        "it's really you or to reset a forgotten password.",
-    },
-    {
-      id: "recovery",
-      field: "recovery",
-      narration: "And a recovery email, in case you ever get locked out.",
-      action: { type: "type", field: "recovery", value: "jane.recovery@example.com" },
-      context:
-        "The recovery email is a backup address used to regain access if you forget your " +
-        "password or get locked out. It's optional but strongly recommended.",
-    },
-    {
-      id: "country",
-      field: "dd-country",
-      narration: "We pick the country or region from the menu.",
-      action: { type: "pick", field: "dd-country", value: "Spain" },
-      context:
-        "Country or region is a dropdown. It sets the account's region for things like " +
-        "language and local services. It is required.",
-    },
-    {
-      id: "terms",
-      field: "terms-field",
-      narration: "I'll tick the box to accept the terms of service.",
-      action: { type: "check", field: "terms" },
-      context:
-        "This checkbox accepts the Terms of Service and Privacy Policy. You can't create the " +
-        "account without ticking it.",
-    },
-    {
-      id: "submit",
-      field: "submit",
-      narration: "And finally, we click Create Account to finish.",
-      action: { type: "click", field: "submit" },
-      context:
-        "The Create Account button submits the form. It checks the required fields and that " +
-        "the passwords match, then confirms the new account. After this you'd land on your " +
-        "new inbox.",
+        "The Draft button generates a real email with a subject and body, written for the " +
+        "selected contact by AI, in a second or two. The text is fully editable and the panel " +
+        "on the right previews it live, exactly as it would be sent.",
     },
     {
       id: "done",
       field: null,
       narration:
-        "And that's it — the account is created! Want me to go over anything again?",
+        "And that's the tour — everything you saw is editable, and that email was written on " +
+        "the spot. Want me to go over anything again?",
       action: null,
       context:
-        "The demo is finished. The account is created. The user can ask follow-up questions " +
+        "The tour is finished. The highlights were: editable contact records, a stage-based " +
+        "deal pipeline, and AI-drafted follow-up emails. The user can ask follow-up questions " +
         "or restart the demo.",
     },
   ],

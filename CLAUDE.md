@@ -1,8 +1,19 @@
 # Karumi Voice Demo Guide — contexto del proyecto
 
-Guía de demo por **voz** para el hackathon de Karumi. Narra una demo paso a paso y el
-usuario puede **interrumpir hablando** para preguntar; la guía pausa, responde breve y
-reanuda desde el mismo paso (el "Core Feature": interactividad en tiempo real / barge-in).
+Guía de demo por **voz**. Narra una demo paso a paso y el usuario puede **interrumpir
+hablando** para preguntar; la guía pausa, responde breve y reanuda desde el mismo paso
+(el "Core Feature": interactividad en tiempo real / barge-in).
+
+> **Ramas / qué se demuestra:** el MOTOR (voz, barge-in, anti-eco, motor human-like) es
+> agnóstico del producto: las acciones (`type`/`pick`/`check`/`click`) apuntan a ids del
+> DOM, así que sirve para CUALQUIER página. El "producto" demostrado vive solo en
+> `public/index.html` + `demo-script.js`.
+> - **`main`** → demo de un formulario de alta de cuenta de Google (un solo formulario largo).
+> - **`crm`** → demo de un **CRM de ventas falso** (datos inventados): Dashboard, Contacts,
+>   Opportunities (pipeline) y Communications. SPA de una sola página (las vistas se cambian
+>   por JS sin recargar, para no destruir la sesión de voz / el WebSocket del STT). Feature
+>   estrella: **redacción de correos con IA** (botón "Draft with AI" → `POST /api/draft` →
+>   Claude). Pensada para desplegarse como un SEGUNDO servicio en Railway, sin tocar `main`.
 
 ## Stack
 
@@ -28,7 +39,9 @@ reanuda desde el mismo paso (el "Core Feature": interactividad en tiempo real / 
 ## Mapa de archivos
 
 - `server.js` — Express; endpoints `/api/demo`, `/api/answer` (Claude), `/api/tts` (ElevenLabs),
-  `/api/ear` (qué STT usar) y el proxy WebSocket `/api/listen` → Deepgram (key server-side).
+  `/api/ear` (qué STT usar), `/api/draft` (rama `crm`: Claude redacta `{subject, body}` para
+  el CRM, salida forzada por la tool `email`) y el proxy WebSocket `/api/listen` → Deepgram
+  (key server-side).
 - `demo-script.js` — **único sitio** donde se edita el contenido de la demo. Cada paso:
   `narration` (lo que dice), `action`/`actions` (lo que HACE en el form: `type`/`pick`/
   `check`/`click`) y `context` (background para el Q&A).
@@ -37,11 +50,18 @@ reanuda desde el mismo paso (el "Core Feature": interactividad en tiempo real / 
   si hay barge-in. Expone `window.Human`. Cargado ANTES de `app.js`.
 - `public/app.js` — máquina de estados (idle/narrating/listening/answering), reproducción,
   barge-in y `performAction`/`runAction` que enrutan cada paso por `Human`.
-- `public/index.html` — el "producto": formulario LARGO de alta de cuenta de Google (en
-  inglés) con desplegables custom (`.dropdown`/`.dd-btn`/`.dd-opt[data-value]`/input hidden,
-  misma convención que el mock de hackathon-karumi). Su lógica propia (abrir/cerrar
-  desplegable + validación de submit) va inline en el HTML. `styles.css` lo estiliza como
-  tarjeta blanca tipo Google sobre el fondo oscuro; el panel de la guía sigue oscuro.
+- `public/index.html` — el "producto" (depende de la rama). En ambas: panel de la guía de voz
+  (ids fijos que `app.js` necesita: `orb`/`status`/`startBtn`/`nextBtn`/`repeatBtn`/`stopBtn`/
+  `transcript`) + desplegables custom con la convención `.dropdown`/`.dd-btn`/`.dd-opt[data-value]`/
+  input hidden. La lógica propia del producto va inline en el HTML.
+  - `main`: formulario de alta de Google.
+  - `crm`: SPA del CRM (sidebar + vistas `view-dashboard|contacts|pipeline|comms`). Cambio de
+    vista por JS (mostrar/ocultar `.view`), modal de contacto, pipeline con `advanceDeal`, y la
+    redacción IA (`btn-draft` → `/api/draft` + preview en vivo). `contacts`/`deals` son arrays
+    en memoria que se renderizan; `window.__resetProduct()` los devuelve a la semilla (lo llama
+    `resetForm()` de `app.js` en cada arranque, para que un replay empiece limpio). OJO con el
+    SPA: un paso que toca una vista oculta NO puede animarse (rect 0); por eso cada paso
+    view-dependiente del `demo-script.js` empieza clicando su pestaña `nav-*`.
 
 ## Reglas del agente de voz (en el system prompt de `buildSystemPrompt`)
 

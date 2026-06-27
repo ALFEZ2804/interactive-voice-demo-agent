@@ -144,6 +144,72 @@ app.post("/api/answer", async (req, res) => {
   }
 });
 
+// ---- CRM feature: AI-drafted follow-up email -----------------------------------
+//
+// The Communications screen of the demo CRM calls this to draft a real email for a
+// (made-up) contact. Like /api/answer, the output is forced through a typed tool so we
+// get clean { subject, body } back instead of free-form text with a greeting/sign-off
+// leaking into the wrong field.
+const DRAFT_TOOL = {
+  name: "email",
+  description: "Return a drafted sales email as a subject line and a body.",
+  input_schema: {
+    type: "object",
+    properties: {
+      subject: { type: "string", description: "A concise, specific subject line (no more than ~8 words)." },
+      body: {
+        type: "string",
+        description:
+          "The email body as plain text. Short and warm (about 4-7 lines): a greeting, one or " +
+          "two sentences of substance for this contact, a clear next step, and a sign-off. Use " +
+          "real line breaks between paragraphs. Sign off as 'The Pipeline CRM team'.",
+      },
+    },
+    required: ["subject", "body"],
+  },
+};
+
+app.post("/api/draft", async (req, res) => {
+  try {
+    const { contact = {}, type = "Follow-up" } = req.body || {};
+    const name = (contact.name || "there").toString().slice(0, 80);
+    const company = (contact.company || "").toString().slice(0, 80);
+    const status = (contact.status || "Lead").toString().slice(0, 40);
+
+    const system = [
+      "You write short, friendly, professional B2B sales emails for a CRM.",
+      "Keep it concise and human — no clichés, no fluff, no markdown.",
+      "Address the person by their first name. Make the email fit the email type and the",
+      "contact's pipeline stage. Output ONLY through the `email` tool.",
+    ].join("\n");
+
+    const prompt =
+      `Draft a "${type}" email to ${name}` +
+      (company ? ` at ${company}` : "") +
+      `. Their current stage in our pipeline is "${status}". ` +
+      "Make it specific enough to feel personal, but it's fine to keep the substance light " +
+      "since this is sample data.";
+
+    const msg = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 600,
+      system,
+      tools: [DRAFT_TOOL],
+      tool_choice: { type: "tool", name: "email" },
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const tool = msg.content.find((b) => b.type === "tool_use");
+    const subject = (tool?.input?.subject || "").trim();
+    const body = (tool?.input?.body || "").trim();
+    if (!subject && !body) return res.status(502).json({ error: "empty_draft" });
+    res.json({ subject, body });
+  } catch (err) {
+    console.error("draft error:", err?.message || err);
+    res.status(500).json({ error: "draft_failed", detail: err?.message });
+  }
+});
+
 // ---- Voice: text -> speech, streamed back as MP3 -------------------------------
 //
 // GET (not POST) so the browser <audio> element can point straight at it and play
