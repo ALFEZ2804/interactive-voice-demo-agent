@@ -154,8 +154,8 @@ export const DEMO = {
       id: "done",
       field: null,
       narration:
-        "And that's the tour — everything you saw is editable, and that email was written on " +
-        "the spot. Want me to go over anything again?",
+        "And that's the tour — every record here is editable, and your follow-up emails get " +
+        "written for you on the spot. Want me to go over anything again?",
       action: null,
       context:
         "The tour is finished. The highlights were: editable contact records, a stage-based " +

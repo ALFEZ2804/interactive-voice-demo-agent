@@ -47,6 +47,7 @@ const state = {
   waitingFor: null,   // "question" (after an interruption) | "validation" (Q&A loop) | null
   acked: false,       // have we already acknowledged this interruption? (pause/validation holds)
   quietBeats: 0,      // silence nudges spoken while waiting for a question (escalates: ask, re-ask, carry on)
+  visited: {},        // sections already shown {dashboard,contacts,pipeline,comms} -> true (demo memory)
   gen: 0,             // turn generation; bumping it invalidates any in-flight speak sequence
   ackTimer: null,
   echoWords: [],      // normalized words of what the agent is saying RIGHT NOW (anti-echo ref)
@@ -316,22 +317,53 @@ function startRun() {
   runSteps(g);
 }
 
+// Which CRM section each demo step belongs to (for the demo's "what have we seen" memory).
+const STEP_SECTION = {
+  dashboard: "dashboard",
+  contacts: "contacts", "new-contact": "contacts", "edit-contact": "contacts",
+  pipeline: "pipeline", "advance-deal": "pipeline",
+  comms: "comms", "draft-email": "comms",
+};
+function markVisited(idx) {
+  const step = DEMO.steps[idx];
+  const sec = step && STEP_SECTION[step.id];
+  if (sec) state.visited[sec] = true;
+}
+const SECTION_ORDER = ["dashboard", "contacts", "pipeline", "comms"];
+// First step of the first section not yet shown, or -1 if everything has been seen.
+function firstUnvisitedSectionStart() {
+  for (const sec of SECTION_ORDER) {
+    if (!state.visited[sec]) {
+      const i = DEMO.steps.findIndex((s) => STEP_SECTION[s.id] === sec);
+      if (i >= 0) return i;
+    }
+  }
+  return -1;
+}
+function doneIndex() {
+  const i = DEMO.steps.findIndex((s) => s.id === "done");
+  return i >= 0 ? i : DEMO.steps.length - 1;
+}
+
 // Jump the demo to a section the user asked for by voice and run it from the top of that
 // step (it narrates the section, clicks its nav tab, and performs its actions).
 function goToSection(id) {
   const idx = DEMO.steps.findIndex((s) => s.id === id);
   if (idx < 0 || !state.sessionActive) return;
   if (typeof window.__closeModals === "function") window.__closeModals(); // dismiss any open dialog
+  stopAudio();   // cut any current narration so it doesn't overlap the new section
   endUserTurn();
   state.stepIndex = idx;
   state.actionIndex = 0;
   state.narrated = false;
+  markVisited(idx);
   startRun();
 }
 
 async function runSteps(g) {
   while (alive(g) && state.stepIndex < DEMO.steps.length) {
     const step = DEMO.steps[state.stepIndex];
+    markVisited(state.stepIndex); // remember this section was shown (even if later interrupted)
 
     // Narration and actions run TOGETHER, so the guide talks WHILE it acts (e.g. says
     // "let me add a contact" as the cursor clicks New contact). Narration is (re)spoken only
@@ -349,7 +381,7 @@ async function runSteps(g) {
     // completed action's index is advanced and NEVER revisited (one-way progress).
     while (state.actionIndex < actions.length) {
       if (!alive(g)) return;
-      await runAction(actions[state.actionIndex]);
+      await runAction(actions[state.actionIndex], g);
       if (!alive(g)) return; // interrupted mid-action -> keep index, re-run just this one
       state.actionIndex++;
     }
@@ -357,10 +389,21 @@ async function runSteps(g) {
     await narrating;       // let any remaining narration finish before advancing
     if (!alive(g)) return; // interrupted during narration -> narrated stays false, re-narrate
 
-    // Step fully done -> advance the checkpoint to the next step.
+    // Step fully done -> advance, but VISITED-AWARE. Mid-section steps just continue in order.
+    // At a section boundary (or the end), head to the first section the user hasn't seen yet;
+    // once everything's been shown, go to the wrap-up — and never re-loop the wrap-up. This is
+    // what makes a jumped-around tour still cover the unseen sections, then stop.
+    const finishedSec = STEP_SECTION[step.id];
     state.stepIndex++;
     state.actionIndex = 0;
     state.narrated = false;
+    const nx = DEMO.steps[state.stepIndex];
+    const nxSec = nx ? STEP_SECTION[nx.id] : null;
+    if (nxSec !== finishedSec) {
+      const j = firstUnvisitedSectionStart();
+      if (j >= 0) state.stepIndex = j;
+      else if (step.id !== "done") state.stepIndex = doneIndex();
+    }
     if (state.stepIndex < DEMO.steps.length) {
       await wait(STEP_GAP);
       if (!alive(g)) return;
@@ -372,19 +415,23 @@ async function runSteps(g) {
   }
 }
 
-async function runAction(action) {
+async function runAction(action, g) {
+  // Gen-bound keepGoing: the moment the turn is superseded (barge-in OR a voice "go to X"),
+  // alive(g) flips false and the in-flight motor (mid-typing, etc.) aborts at once instead of
+  // finishing the field first. Falls back to the plain driving() check if no gen is given.
+  const kg = g == null ? keepGoing : () => alive(g);
   if (action.type === "type") {
     const el = document.getElementById(action.field);
-    if (el) await Human.type(el, action.value, { keepGoing, think: action.think });
+    if (el) await Human.type(el, action.value, { keepGoing: kg, think: action.think });
   } else if (action.type === "pick") {
-    await Human.pick("#" + action.field, action.value, { keepGoing });
+    await Human.pick("#" + action.field, action.value, { keepGoing: kg });
   } else if (action.type === "check") {
     const input = document.getElementById(action.field);
     const label = input && input.closest("label");
-    if (label && !input.checked) await Human.click(label, { keepGoing });
+    if (label && !input.checked) await Human.click(label, { keepGoing: kg });
   } else if (action.type === "click") {
     const el = document.getElementById(action.field);
-    if (el) await Human.click(el, { keepGoing, pause: 0.4 });
+    if (el) await Human.click(el, { keepGoing: kg, pause: 0.4 });
   }
 }
 
@@ -556,6 +603,8 @@ async function answerQuestion(text) {
 
   let answer = "Sorry, I didn't quite catch that — could you say it again?";
   let checkIn = false; // did the brain judge a "does that make sense?" worth asking?
+  let goto = "";       // brain understood a navigation request -> jump to this section
+  let done = false;    // brain judged the user is finished -> wrap up
   try {
     const r = await fetch("/api/answer", {
       method: "POST",
@@ -564,22 +613,32 @@ async function answerQuestion(text) {
         question: text,
         stepIndex: state.stepIndex,
         history: state.history.slice(-6),
+        visited: state.visited, // demo memory: which sections we've already shown
       }),
     });
     const data = await r.json();
     if (data.text) answer = data.text;
     checkIn = !!data.checkIn;
+    goto = data.goto || "";
+    done = !!data.done;
   } catch (e) {
     console.error(e);
   }
   state.busy = false;
   if (g !== state.gen || !state.sessionActive) return; // a newer interruption superseded this
 
+  // The brain understood a navigation request (even a vague one) — jump there NOW instead of
+  // answering, so the user is never told "let me finish this first".
+  if (goto) return goToSection(goto);
+
   state.history.push({ role: "assistant", content: answer });
   addMsg("Guide", answer);
   setMode("answering", "Answering…");
   await speak(answer); // interruptible: the user can ask a follow-up over the answer
   if (g !== state.gen || !state.sessionActive) return;
+
+  // The brain judged the user is finished / has seen enough — wrap up, do NOT resume.
+  if (done) return endSession();
 
   // If our OWN answer ended by asking the user something, we must wait for their reply —
   // NOT resume the demo (the old bug: "what's your question?" then "let's continue") and not
@@ -662,7 +721,12 @@ async function farewell() {
   const bye = pickFarewell();
   addMsg("Guide", bye);
   await speak(bye);
-  // The conversation is over regardless of how the goodbye ended — close everything out.
+  endSession();
+}
+
+// Tear down the session (ear, mic, cursor) and go idle. Used by farewell() and when the brain
+// decides the demo is done (the spoken sign-off has already been said by the caller).
+function endSession() {
   state.sessionActive = false;
   stopEar();
   releaseMic();
@@ -687,7 +751,7 @@ const CLOSE = /\b(no more|nothing else|no thanks|i'?m good|im good|all good|noth
 const DENY = /^(no|nope|not really|not quite|not clear|kind of|sort of|i don'?t (get|understand))\b/;
 // A goodbye / "we're done" — ends the whole interaction (checked before everything
 // else so a farewell never gets routed into the Q&A or validation loop).
-const FAREWELL = /\b(bye|goodbye|good bye|see (you|ya)|gotta go|i['’]?m done|we['’]?re done|that(?: is|['’]?s) (all|it|everything)|that['’]?ll be all)\b/;
+const FAREWELL = /\b(bye|goodbye|good bye|see (you|ya)|gotta go|i['’]?m done|we['’]?re done|we'?re good|i['’]?m good for now|good for now|that(?: is|['’]?s) (all|it|everything)( for (now|today|me))?|that(?: is|['’]?s) enough( for (now|today|me))?|that['’]?ll (be all|do)|leave it (here|there)|stop here|(?:we'?ve |i'?ve |you'?ve )?(seen|shown me) (it all|everything|enough)|seen enough|i think (?:that'?s|that is|we'?ve) (it|all|everything|covered (?:it|everything))|let'?s (stop|finish|wrap (?:it |this )?up|call it( a day| here)?)|wrap (?:it|this) up|we can (stop|finish|end|wrap (?:it |this )?up|call it))\b/;
 // An explicit request for TIME — the whole utterance is just "hold on / one moment /
 // let me think" with nothing else. Anchored to the end so "hold on, what does this do?"
 // is NOT treated as a pause (it carries a real question) and falls through to Q&A.
@@ -1005,6 +1069,7 @@ async function startDemo() {
   state.stepIndex = 0;
   state.actionIndex = 0;
   state.narrated = false;
+  state.visited = {};
   state.sessionActive = true;
   endUserTurn();
   resetForm();

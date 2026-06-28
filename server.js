@@ -54,7 +54,16 @@ app.get("/api/ear", (_req, res) =>
 // Builds a system prompt that encodes the spec: spoken English only, conversational,
 // non-technical, brief (voice latency), and anchored to the CURRENT demo step so the
 // answer keeps the demo context during Q&A.
-function buildSystemPrompt(step) {
+const SECTION_LABELS = [
+  ["dashboard", "Dashboard"],
+  ["contacts", "Contacts"],
+  ["pipeline", "Pipeline"],
+  ["comms", "Communications"],
+];
+
+function buildSystemPrompt(step, visited = {}) {
+  const seen = SECTION_LABELS.filter(([id]) => visited[id]).map(([, l]) => l);
+  const notSeen = SECTION_LABELS.filter(([id]) => !visited[id]).map(([, l]) => l);
   return [
     "You are a friendly human-sounding product demo guide. You speak, you are not a chatbot.",
     "",
@@ -69,12 +78,20 @@ function buildSystemPrompt(step) {
     "- If the question is unrelated or you don't know, say so briefly and offer to continue the demo.",
     "- If the message is cut off or unfinished (e.g. \"and what about…\"), do NOT guess what they meant. Ask them to finish the thought in a few words.",
     "",
+    "NAVIGATION & FINISHING — you are DRIVING a live demo, so steer it like a real salesperson:",
+    "- The CRM has four sections: Dashboard, Contacts, Pipeline, Communications.",
+    `- Already shown: ${seen.length ? seen.join(", ") : "none yet"}. Not shown yet: ${notSeen.length ? notSeen.join(", ") : "none"}.`,
+    "- If the user wants to go to / see / skip to a section — even vaguely (\"forget this contact, show me the pipeline\") — set `goto` to that section id (dashboard|contacts|pipeline|comms) and make `text` a SHORT acknowledgement like \"Sure, let's jump to the pipeline.\" OBEY IMMEDIATELY; never insist on finishing the current step first.",
+    "- If the user signals in ANY way that they're finished or have seen enough (\"I think we've seen everything\", \"that's all\", \"that's enough\", \"leave it here\", \"we're good\", \"you've shown me enough\", \"I'm good for now\"), you MUST set `done` to true and make `text` a brief, warm sign-off. When `done` is true the session ENDS immediately after your line — so NEVER imply the demo continues and NEVER say things like \"let's carry on\".",
+    "- Take what's already been shown into account: if everything has been shown and the user sounds at all satisfied or ready to stop, prefer `done` over continuing. Do not keep the tour going when there's nothing new left and they haven't asked for more.",
+    "- Otherwise leave `goto` empty and `done` false and just answer.",
+    "",
     `WHAT IS BEING DEMOED: ${DEMO.product}`,
     "",
     `THE USER IS CURRENTLY ON THIS STEP: "${step.narration}"`,
     `BACKGROUND FOR THIS STEP (use it to answer, do not read it out): ${step.context}`,
     "",
-    "After you answer, the demo will resume from this same step, so you don't need to tell them what to do next.",
+    "After you answer (and unless you set goto/done), the demo resumes from this same step, so you don't need to tell them what to do next.",
   ].join("\n");
 }
 
@@ -100,14 +117,27 @@ const REPLY_TOOL = {
           "Set FALSE when you fully resolved it, when it was trivial/obvious, or when your text already ends " +
           "by asking the user something.",
       },
+      goto: {
+        type: "string",
+        enum: ["", "dashboard", "contacts", "pipeline", "comms"],
+        description:
+          "Set to a section id to JUMP the demo there RIGHT NOW because the user asked to go/see/skip to it. " +
+          "Empty string if the user is not asking to navigate.",
+      },
+      done: {
+        type: "boolean",
+        description:
+          "Set TRUE only when the user signals the demo should wrap up or they've seen enough. Then `text` is a " +
+          "short warm sign-off and the session ends. FALSE otherwise.",
+      },
     },
-    required: ["text", "checkIn"],
+    required: ["text", "checkIn", "goto", "done"],
   },
 };
 
 app.post("/api/answer", async (req, res) => {
   try {
-    const { question, stepIndex = 0, history = [] } = req.body || {};
+    const { question, stepIndex = 0, history = [], visited = {} } = req.body || {};
     if (!question || typeof question !== "string") {
       return res.status(400).json({ error: "Missing 'question'." });
     }
@@ -122,22 +152,27 @@ app.post("/api/answer", async (req, res) => {
       // No `thinking` block: this is a fast, simple Q&A turn and thinking would add
       // latency. Forcing the `reply` tool keeps Opus 4.8 from leaking reasoning into the
       // visible answer and gives us the typed { text, checkIn } in one round-trip.
-      system: buildSystemPrompt(step),
+      system: buildSystemPrompt(step, visited),
       tools: [REPLY_TOOL],
       tool_choice: { type: "tool", name: "reply" },
       messages: [...trimmed, { role: "user", content: question }],
     });
 
     // Forced tool_choice => the reply comes back as a tool_use block. Fall back to any
-    // text block (and a safe checkIn=false) on the off chance the shape isn't as expected.
+    // text block (and safe defaults) on the off chance the shape isn't as expected.
     const tool = msg.content.find((b) => b.type === "tool_use");
     let text = (tool?.input?.text || "").trim();
     let checkIn = !!tool?.input?.checkIn;
+    let goto = (tool?.input?.goto || "").trim();
+    let done = !!tool?.input?.done;
+    if (!["dashboard", "contacts", "pipeline", "comms"].includes(goto)) goto = "";
     if (!text) {
       text = msg.content.find((b) => b.type === "text")?.text?.trim() ?? "";
       checkIn = false;
+      goto = "";
+      done = false;
     }
-    res.json({ text, checkIn });
+    res.json({ text, checkIn, goto, done });
   } catch (err) {
     console.error("answer error:", err?.message || err);
     res.status(500).json({ error: "answer_failed", detail: err?.message });
