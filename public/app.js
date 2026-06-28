@@ -48,6 +48,7 @@ const state = {
   acked: false,       // have we already acknowledged this interruption? (pause/validation holds)
   quietBeats: 0,      // silence nudges spoken while waiting for a question (escalates: ask, re-ask, carry on)
   visited: {},        // sections already shown {dashboard,contacts,pipeline,comms} -> true (demo memory)
+  checkinStyle: "clarity", // which post-answer check-in was asked: "more" | "confirm" | "clarity" (routes yes/no)
   gen: 0,             // turn generation; bumping it invalidates any in-flight speak sequence
   ackTimer: null,
   echoWords: [],      // normalized words of what the agent is saying RIGHT NOW (anti-echo ref)
@@ -102,6 +103,19 @@ const VALIDATIONS = [
   "Does that make sense?",
   "Is that clearer now?",
 ];
+// Two more check-in STYLES, rotated together with the clarity check above so the post-answer
+// follow-up never feels canned. Each style routes yes/no DIFFERENTLY (see handleUtterance),
+// so the spoken question and the interpretation of the reply always match.
+const CHECKIN_MORE = [    // "no / that's all" -> carry on;  a question -> answer it
+  "Anything else, or shall I carry on?",
+  "Any other questions, or should I keep going?",
+  "Anything more you'd like to see?",
+];
+const CHECKIN_CONFIRM = [ // "yes / continue" -> carry on;  "no / not yet" -> they have more
+  "Want me to carry on?",
+  "Shall I keep going?",
+  "Ready to move on?",
+];
 const CLARIFIES = [
   "No problem — what part should I go over?",
   "Sure — what would you like me to explain?",
@@ -142,6 +156,9 @@ function makeRotator(items) {
 }
 const pickAck = makeRotator(ACKS);
 const pickValidation = makeRotator(VALIDATIONS);
+const pickMore = makeRotator(CHECKIN_MORE);
+const pickConfirm = makeRotator(CHECKIN_CONFIRM);
+const pickCheckinStyle = makeRotator(["more", "confirm", "clarity"]); // rotate so it varies
 const pickClarify = makeRotator(CLARIFIES);
 const pickTransition = makeRotator(TRANSITIONS);
 const pickFarewell = makeRotator(FAREWELLS);
@@ -180,6 +197,28 @@ function escapeHtml(s) {
 // call sites stay valid. (We clear any stray highlight class just in case.)
 function highlightField() {
   document.querySelectorAll(".highlight").forEach((e) => e.classList.remove("highlight"));
+}
+
+// Discreet, auto-dismissing notice — only used to surface critical problems (e.g. the mic is
+// blocked, or speech recognition isn't available), so the tester is never left guessing why
+// nothing happened. Created on the fly so it adds no clutter in the happy path.
+let noticeTimer = null;
+function notify(msg) {
+  let n = document.getElementById("notice");
+  if (!n) {
+    n = document.createElement("div");
+    n.id = "notice";
+    n.style.cssText =
+      "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2000;" +
+      "background:rgba(58,29,29,.96);color:#ffdada;border:1px solid #7a3b3b;padding:11px 16px;" +
+      "border-radius:10px;font:14px/1.45 system-ui,sans-serif;max-width:540px;text-align:center;" +
+      "box-shadow:0 8px 28px rgba(0,0,0,.45);";
+    document.body.appendChild(n);
+  }
+  n.textContent = msg;
+  n.style.display = "block";
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { n.style.display = "none"; }, 8000);
 }
 
 // ---- Voice output (ElevenLabs via our /api/tts) -------------------------------
@@ -640,13 +679,12 @@ async function answerQuestion(text) {
   // The brain judged the user is finished / has seen enough — wrap up, do NOT resume.
   if (done) return endSession();
 
-  // If our OWN answer ended by asking the user something, we must wait for their reply —
-  // NOT resume the demo (the old bug: "what's your question?" then "let's continue") and not
-  // stack a validation. Otherwise validation is conditional: skip it (and carry on) for a
-  // reactive comment or when the brain saw no need to check in; else do a clarity check.
+  // If our OWN answer ended by asking the user something, wait for their reply (don't resume,
+  // don't stack a check-in). A purely reactive comment ("nice") just carries on. Otherwise we
+  // ALWAYS check in (rotating the wording) and WAIT — never auto-resume, which felt robotic.
   if (endsWithQuestion(answer)) holdForReply(g);
-  else if (isPureComment(text) || !checkIn) resumeOrFinish();
-  else await askValidation(g);
+  else if (isPureComment(text)) resumeOrFinish();
+  else await askCheckin(g);
 }
 
 // Our spoken answer ended by asking the user something, so hold the floor and wait for their
@@ -666,16 +704,21 @@ function endsWithQuestion(s) {
   return /\?["'”’)\]]*\s*$/.test((s || "").trim());
 }
 
-async function askValidation(g) {
+// Post-answer check-in: rotate among three styles (clarity / "anything else?" / "shall I
+// continue?") so it never feels canned, REMEMBER which one we asked, and WAIT for the user
+// rather than carrying on by ourselves. The chosen style decides how yes/no is read later.
+async function askCheckin(g) {
+  const style = pickCheckinStyle();
+  const q = style === "more" ? pickMore() : style === "confirm" ? pickConfirm() : pickValidation();
   setMode("answering", "…");
-  const q = pickValidation();
   addMsg("Guide", q);
   await speak(q);
   if (g !== state.gen || !state.sessionActive) return;
   state.userTurn = true;
   state.waitingFor = "validation";
+  state.checkinStyle = style;
   state.acked = false; // fresh passive-ack budget for this wait
-  setMode("listening", "Listening — does that help?");
+  setMode("listening", style === "clarity" ? "Listening — does that help?" : "Listening — anything else?");
 }
 
 async function clarify() {
@@ -749,6 +792,12 @@ const CONTINUE = /\b(continue|keep going|carry on|go on|move on|proceed|go ahead
 const APPROVE = /^(yes|yeah|yep|yup|sure|clear|that'?s clear|got it|makes sense|understood|perfect|great|cool|thanks|thank you|ok|okay|alright|fine|i'?m (fine|good|ok|okay)|we'?re (fine|good|ok)|everything'?s? (is )?(fine|good|ok|okay|clear|alright)|all (good|fine|set)|sounds good)\b/;
 const CLOSE = /\b(no more|nothing else|no thanks|i'?m good|im good|all good|nothing( more| else)?)\b/;
 const DENY = /^(no|nope|not really|not quite|not clear|kind of|sort of|i don'?t (get|understand))\b/;
+// A bare affirmative with nothing after it. After an "anything else?" check-in this means
+// "yes, I do have more" (invite the question) — NOT "yes, carry on".
+const BARE_YES = /^(yes|yeah|yep|yup|sure|i do)[\s.,!?]*$/;
+// "I'm satisfied, move on" markers that DON'T start with yes/yeah (so an "anything else?"
+// check-in can carry on without mistaking "yes, one more thing…" for it).
+const SATISFIED = /^(ok(ay)?|alright|fine|thanks|thank you|that'?s (great|good|perfect|fine|all|it)|great|perfect|cool|lovely|nice|i'?m good|all good|sounds good|got it|no thanks)\b/;
 // A goodbye / "we're done" — ends the whole interaction (checked before everything
 // else so a farewell never gets routed into the Q&A or validation loop).
 const FAREWELL = /\b(bye|goodbye|good bye|see (you|ya)|gotta go|i['’]?m done|we['’]?re done|we'?re good|i['’]?m good for now|good for now|that(?: is|['’]?s) (all|it|everything)( for (now|today|me))?|that(?: is|['’]?s) enough( for (now|today|me))?|that['’]?ll (be all|do)|leave it (here|there)|stop here|(?:we'?ve |i'?ve |you'?ve )?(seen|shown me) (it all|everything|enough)|seen enough|i think (?:that'?s|that is|we'?ve) (it|all|everything|covered (?:it|everything))|let'?s (stop|finish|wrap (?:it |this )?up|call it( a day| here)?)|wrap (?:it|this) up|we can (stop|finish|end|wrap (?:it |this )?up|call it))\b/;
@@ -852,9 +901,24 @@ function handleUtterance(text) {
   }
 
   if (state.waitingFor === "validation") {
+    const style = state.checkinStyle;
+    if (style === "more") {
+      // "Anything else?": a bare "yes" = they HAVE more (invite it); no / a closer / a
+      // satisfied marker = carry on; anything else (incl. "yes, how do I…") = answer it.
+      if (BARE_YES.test(lc)) return promptForQuestion();
+      if (DENY.test(lc) || CLOSE.test(lc) || RESUME.test(lc) || CONTINUE.test(lc) || SATISFIED.test(lc)) return resumeOrFinish();
+      return answerQuestion(text);
+    }
+    if (style === "confirm") {
+      // "Shall I continue?": yes / continue = carry on; "no / not yet" = they have more.
+      if (APPROVE.test(lc) || CONTINUE.test(lc) || RESUME.test(lc) || CLOSE.test(lc)) return resumeOrFinish();
+      if (DENY.test(lc)) return promptForQuestion();
+      return answerQuestion(text);
+    }
+    // "clarity" (unchanged): yes = carry on; no = re-explain; else answer the follow-up.
     if (RESUME.test(lc) || CONTINUE.test(lc) || CLOSE.test(lc) || APPROVE.test(lc)) return resumeOrFinish();
     if (DENY.test(lc)) return clarify();
-    return answerQuestion(text); // a follow-up question -> answer, then validate again
+    return answerQuestion(text);
   }
 
   // "question" phase (interrupted) or open listening.
@@ -1025,8 +1089,11 @@ async function startEar() {
   }
   browserRec = setupBrowserRecognition();
   if (!browserRec) {
-    setMode("idle", "This browser has no Speech Recognition — use Chrome or Edge");
+    setMode("idle", "Voice unavailable");
+    notify("Couldn't start voice — please use Chrome (or Edge) and allow microphone access, then press Start again.");
     state.sessionActive = false;
+    Human.removeCursor(); // don't leave the painted cursor stuck after a failed start
+    releaseMic();
     return false;
   }
   startBrowserRecognition(browserRec);
@@ -1081,6 +1148,10 @@ async function startDemo() {
   if (!state.sessionActive) return; // user may have stopped while the mic prompt was up
   if (!(await startEar())) return;  // Deepgram if configured, else browser STT (or bail)
   if (!state.sessionActive) return; // ear setup may have failed and ended the session
+  if (!state.micStream) {
+    // The tour still plays (TTS + the motor), but with no mic we can't hear the user.
+    notify("Microphone blocked — the tour will play, but you won't be able to talk to it. Allow the mic and press Start again to interact by voice.");
+  }
   startRun();
 }
 

@@ -197,7 +197,7 @@ const DRAFT_TOOL = {
         description:
           "The email body as plain text. Short and warm (about 4-7 lines): a greeting, one or " +
           "two sentences of substance for this contact, a clear next step, and a sign-off. Use " +
-          "real line breaks between paragraphs. Sign off as 'The Pipeline CRM team'.",
+          "real line breaks between paragraphs. Sign off as 'The Sales CRM team'.",
       },
     },
     required: ["subject", "body"],
