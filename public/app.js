@@ -29,7 +29,6 @@ const els = {
   transcript: document.getElementById("transcript"),
   startBtn: document.getElementById("startBtn"),
   continueBtn: document.getElementById("continueBtn"),
-  repeatBtn: document.getElementById("repeatBtn"),
   stopBtn: document.getElementById("stopBtn"),
 };
 
@@ -43,6 +42,7 @@ const state = {
   audioResolve: null, // resolver of the in-flight speak() promise (so stopAudio settles it)
   busy: false,        // awaiting a Claude answer over the network (don't accept new input)
   sessionActive: false,
+  paused: false,      // demo paused via the Stop button (resumable with Continue; not torn down)
   userTurn: false,    // the user has the floor
   waitingFor: null,   // "question" (after an interruption) | "validation" (Q&A loop) | null
   acked: false,       // have we already acknowledged this interruption? (pause/validation holds)
@@ -173,10 +173,23 @@ function setMode(mode, statusText) {
   state.mode = mode;
   if (els.orb) els.orb.className = "orb " + (mode === "idle" ? "idle" : mode);
   if (els.status) els.status.textContent = statusText || mode;
-  els.continueBtn.disabled = !state.sessionActive;
-  els.repeatBtn.disabled = !state.sessionActive;
-  els.stopBtn.disabled = !state.sessionActive;
-  els.startBtn.disabled = state.sessionActive;
+  updateDock();
+}
+
+// The floating controls have three states:
+//   idle    -> Start demo [primary], Continue (off), Stop (off)
+//   running -> Start demo (off), Continue, Stop
+//   paused  -> Restart demo, Continue [primary, the obvious next move], Finish
+function updateDock() {
+  const idle = !state.sessionActive;
+  const paused = !!state.paused;
+  els.startBtn.textContent = paused ? "Restart demo" : "Start demo";
+  els.startBtn.disabled = !idle && !paused;            // usable to start (idle) or restart (paused)
+  els.startBtn.classList.toggle("primary", idle);      // highlighted only at the very start
+  els.continueBtn.disabled = idle;                     // available while running or paused
+  els.continueBtn.classList.toggle("primary", paused); // highlighted when paused
+  els.stopBtn.textContent = paused ? "Finish" : "Stop";
+  els.stopBtn.disabled = idle;
 }
 
 function addMsg(who, text) {
@@ -356,26 +369,28 @@ function startRun() {
   runSteps(g);
 }
 
-// Which CRM section each demo step belongs to (for the demo's "what have we seen" memory).
+// Which CRM section each demo step belongs to — used to switch to the right view when the
+// user jumps straight to a SUB-step (e.g. "edit the contact") so the motor doesn't glide to
+// an element in a hidden view.
 const STEP_SECTION = {
   dashboard: "dashboard",
   contacts: "contacts", "new-contact": "contacts", "edit-contact": "contacts",
   pipeline: "pipeline", "advance-deal": "pipeline",
   comms: "comms", "draft-email": "comms",
 };
+// "What have we shown" memory is per STEP now (not per section): a skipped sub-step (e.g.
+// creating a contact) stays unseen and gets shown later automatically.
 function markVisited(idx) {
   const step = DEMO.steps[idx];
-  const sec = step && STEP_SECTION[step.id];
-  if (sec) state.visited[sec] = true;
+  if (step) state.visited[step.id] = true;
 }
-const SECTION_ORDER = ["dashboard", "contacts", "pipeline", "comms"];
-// First step of the first section not yet shown, or -1 if everything has been seen.
-function firstUnvisitedSectionStart() {
-  for (const sec of SECTION_ORDER) {
-    if (!state.visited[sec]) {
-      const i = DEMO.steps.findIndex((s) => STEP_SECTION[s.id] === sec);
-      if (i >= 0) return i;
-    }
+// The next step the user hasn't seen yet, in demo order (welcome/done aren't coverage
+// targets). Returns -1 once everything has been shown.
+function nextUnvisitedStep() {
+  for (let i = 0; i < DEMO.steps.length; i++) {
+    const id = DEMO.steps[i].id;
+    if (id === "welcome" || id === "done") continue;
+    if (!state.visited[id]) return i;
   }
   return -1;
 }
@@ -384,13 +399,19 @@ function doneIndex() {
   return i >= 0 ? i : DEMO.steps.length - 1;
 }
 
-// Jump the demo to a section the user asked for by voice and run it from the top of that
-// step (it narrates the section, clicks its nav tab, and performs its actions).
-function goToSection(id) {
+// Jump the demo to a specific STEP the user asked for — a section overview ("show me the
+// pipeline") OR a sub-action ("no, edit the contact instead"). For a sub-step we first switch
+// to its section's view (the nav click also closes any open modal), then run from that step.
+function goToStep(id) {
   const idx = DEMO.steps.findIndex((s) => s.id === id);
   if (idx < 0 || !state.sessionActive) return;
-  if (typeof window.__closeModals === "function") window.__closeModals(); // dismiss any open dialog
-  stopAudio();   // cut any current narration so it doesn't overlap the new section
+  if (typeof window.__closeModals === "function") window.__closeModals();
+  const sec = STEP_SECTION[id];
+  if (sec && sec !== id) {
+    const nav = document.getElementById("nav-" + sec);
+    if (nav) nav.click(); // sub-step: make sure its view is active first
+  }
+  stopAudio();   // cut any current narration so it doesn't overlap the jump
   endUserTurn();
   state.stepIndex = idx;
   state.actionIndex = 0;
@@ -402,7 +423,7 @@ function goToSection(id) {
 async function runSteps(g) {
   while (alive(g) && state.stepIndex < DEMO.steps.length) {
     const step = DEMO.steps[state.stepIndex];
-    markVisited(state.stepIndex); // remember this section was shown (even if later interrupted)
+    markVisited(state.stepIndex); // remember this step was shown (even if later interrupted)
 
     // Narration and actions run TOGETHER, so the guide talks WHILE it acts (e.g. says
     // "let me add a contact" as the cursor clicks New contact). Narration is (re)spoken only
@@ -428,20 +449,18 @@ async function runSteps(g) {
     await narrating;       // let any remaining narration finish before advancing
     if (!alive(g)) return; // interrupted during narration -> narrated stays false, re-narrate
 
-    // Step fully done -> advance, but VISITED-AWARE. Mid-section steps just continue in order.
-    // At a section boundary (or the end), head to the first section the user hasn't seen yet;
-    // once everything's been shown, go to the wrap-up — and never re-loop the wrap-up. This is
-    // what makes a jumped-around tour still cover the unseen sections, then stop.
-    const finishedSec = STEP_SECTION[step.id];
-    state.stepIndex++;
+    // Step fully done -> advance, VISITED-AWARE per step: go to the next step the user hasn't
+    // seen yet (in demo order). In a normal run that's just the next step; after a jump it
+    // doubles back to cover anything skipped. Once everything's been shown, go to the wrap-up,
+    // and after the wrap-up itself, end (never re-loop it).
+    const finishedId = step.id;
     state.actionIndex = 0;
     state.narrated = false;
-    const nx = DEMO.steps[state.stepIndex];
-    const nxSec = nx ? STEP_SECTION[nx.id] : null;
-    if (nxSec !== finishedSec) {
-      const j = firstUnvisitedSectionStart();
-      if (j >= 0) state.stepIndex = j;
-      else if (step.id !== "done") state.stepIndex = doneIndex();
+    if (finishedId === "done") {
+      state.stepIndex = DEMO.steps.length; // wrap-up shown -> end -> enterListening
+    } else {
+      const j = nextUnvisitedStep();
+      state.stepIndex = j >= 0 ? j : doneIndex();
     }
     if (state.stepIndex < DEMO.steps.length) {
       await wait(STEP_GAP);
@@ -668,7 +687,7 @@ async function answerQuestion(text) {
 
   // The brain understood a navigation request (even a vague one) — jump there NOW instead of
   // answering, so the user is never told "let me finish this first".
-  if (goto) return goToSection(goto);
+  if (goto) return goToStep(goto);
 
   state.history.push({ role: "assistant", content: answer });
   addMsg("Guide", answer);
@@ -874,14 +893,14 @@ function handleUtterance(text) {
   clearTurnTimers();
   if (state.busy) return;
 
-  if (COMMANDS.stop.test(lc)) return stopDemo();
+  if (COMMANDS.stop.test(lc)) return finishDemo();
   if (FAREWELL.test(lc)) return farewell(); // a goodbye is terminal — never route it into Q&A
   if (COMMANDS.next.test(lc)) return nextStep();
   if (COMMANDS.repeat.test(lc)) return repeatStep();
 
   // "go to communications", "show me the pipeline", "no, back to the dashboard" — jump there.
   const nav = navTarget(lc);
-  if (nav) return goToSection(nav);
+  if (nav) return goToStep(nav);
 
   // End of the demo: the user is answering "anything else?". A closing/negative ENDS the
   // session (no more "any other questions?" loop); a real question still gets answered below.
@@ -931,7 +950,7 @@ function handleUtterance(text) {
 // non-empty `final` is a completed user utterance to route. This is the ONLY place that
 // reacts to speech, so the whole state machine behaves identically whichever ear produced it.
 function onSpeech(interim, final) {
-  if (!state.sessionActive) return;
+  if (!state.sessionActive || state.paused) return; // paused: controlled by the buttons, not voice
 
   // VAD / barge-in: the moment the user talks while the guide is outputting, stop —
   // UNLESS it's our own voice echoing off the speaker (anti-echo), which we never act on.
@@ -1138,7 +1157,9 @@ async function startDemo() {
   state.narrated = false;
   state.visited = {};
   state.sessionActive = true;
+  state.paused = false;
   endUserTurn();
+  updateDock(); // reflect "running" immediately (even during the mic prompt)
   resetForm();
   Human.initCursor(); // paint the cursor that will glide over the form
   rememberPlaceholders();
@@ -1155,8 +1176,31 @@ async function startDemo() {
   startRun();
 }
 
-function stopDemo() {
+// PAUSE (the "Stop" button while running): halt talking + the run, but keep the session and
+// the checkpoint alive so "Continue" can pick up exactly where it left off.
+function pauseDemo() {
+  if (!state.sessionActive || state.paused) return;
+  state.paused = true;
+  bumpGen();          // abort the in-flight run / motor
+  clearTurnTimers();
+  state.busy = false;
+  state.userTurn = false;
+  state.waitingFor = null;
+  stopAudio();        // stop talking
+  setMode("idle", "Paused"); // orb idle + dock -> paused state (Restart / Continue[primary] / Finish)
+}
+
+// CONTINUE: leave the paused state and resume from the checkpoint (reverts the dock to running).
+function continueDemo() {
+  if (!state.sessionActive) return;
+  state.paused = false;
+  resumeDemo(); // its setMode("narrating") refreshes the dock to the running state
+}
+
+// FINISH (the "Finish" button while paused, or the voice "stop" command): tear everything down.
+function finishDemo() {
   state.sessionActive = false;
+  state.paused = false;
   bumpGen();
   endUserTurn();
   state.busy = false;
@@ -1165,14 +1209,19 @@ function stopDemo() {
   releaseMic(); // free the echo-cancelled capture so the mic indicator clears
   highlightField(null);
   Human.removeCursor();
-  setMode("idle", "Stopped");
+  setMode("idle", "Thanks — session ended");
+}
+
+// The Stop button pauses while running and finishes while already paused.
+function onStopOrFinish() {
+  if (state.paused) return finishDemo();
+  if (state.sessionActive) return pauseDemo();
 }
 
 // ---- Wire up ------------------------------------------------------------------
-els.startBtn.addEventListener("click", startDemo);
-els.continueBtn.addEventListener("click", () => state.sessionActive && resumeDemo());
-els.repeatBtn.addEventListener("click", () => state.sessionActive && repeatStep());
-els.stopBtn.addEventListener("click", stopDemo);
+els.startBtn.addEventListener("click", startDemo); // "Start demo" / "Restart demo" both reset+start
+els.continueBtn.addEventListener("click", continueDemo);
+els.stopBtn.addEventListener("click", onStopOrFinish);
 
 (async function init() {
   rememberPlaceholders();

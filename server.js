@@ -54,16 +54,23 @@ app.get("/api/ear", (_req, res) =>
 // Builds a system prompt that encodes the spec: spoken English only, conversational,
 // non-technical, brief (voice latency), and anchored to the CURRENT demo step so the
 // answer keeps the demo context during Q&A.
-const SECTION_LABELS = [
-  ["dashboard", "Dashboard"],
-  ["contacts", "Contacts"],
-  ["pipeline", "Pipeline"],
-  ["comms", "Communications"],
+// The steps the guide can jump to by voice (id -> what it is). Excludes welcome/done.
+// The user can ask for a whole section OR a specific sub-action ("edit the contact").
+const NAV_STEPS = [
+  ["dashboard", "the dashboard (headline numbers)"],
+  ["contacts", "the contacts list"],
+  ["new-contact", "adding a new contact"],
+  ["edit-contact", "editing an existing contact"],
+  ["pipeline", "the pipeline (deals by stage)"],
+  ["advance-deal", "moving a deal to the next stage"],
+  ["comms", "communications (the email screen)"],
+  ["draft-email", "drafting a follow-up email with AI"],
 ];
+const NAV_IDS = NAV_STEPS.map(([id]) => id);
 
 function buildSystemPrompt(step, visited = {}) {
-  const seen = SECTION_LABELS.filter(([id]) => visited[id]).map(([, l]) => l);
-  const notSeen = SECTION_LABELS.filter(([id]) => !visited[id]).map(([, l]) => l);
+  const menu = NAV_STEPS.map(([id, label]) => `    ${id} — ${label}${visited[id] ? "  [already shown]" : ""}`).join("\n");
+  const allSeen = NAV_IDS.every((id) => visited[id]);
   return [
     "You are a friendly human-sounding product demo guide. You speak, you are not a chatbot.",
     "",
@@ -78,12 +85,14 @@ function buildSystemPrompt(step, visited = {}) {
     "- If the question is unrelated or you don't know, say so briefly and offer to continue the demo.",
     "- If the message is cut off or unfinished (e.g. \"and what about…\"), do NOT guess what they meant. Ask them to finish the thought in a few words.",
     "",
-    "NAVIGATION & FINISHING — you are DRIVING a live demo, so steer it like a real salesperson:",
-    "- The CRM has four sections: Dashboard, Contacts, Pipeline, Communications.",
-    `- Already shown: ${seen.length ? seen.join(", ") : "none yet"}. Not shown yet: ${notSeen.length ? notSeen.join(", ") : "none"}.`,
-    "- If the user wants to go to / see / skip to a section — even vaguely (\"forget this contact, show me the pipeline\") — set `goto` to that section id (dashboard|contacts|pipeline|comms) and make `text` a SHORT acknowledgement like \"Sure, let's jump to the pipeline.\" OBEY IMMEDIATELY; never insist on finishing the current step first.",
+    "NAVIGATION & FINISHING — you are DRIVING a live demo, so steer it like a real salesperson.",
+    "You can jump to ANY of these steps by setting `goto` to its id:",
+    menu,
+    "- If the user asks to go to / see / skip to / do a specific part — even vaguely (\"forget this contact, show me the pipeline\", \"no, edit a contact instead\", \"do the email first\", \"skip ahead to the deals\") — set `goto` to the RIGHT step id above and make `text` a SHORT acknowledgement like \"Sure, let's edit a contact.\" OBEY IMMEDIATELY; never insist on finishing the current step first. Don't worry about order — anything skipped will be shown later automatically.",
     "- If the user signals in ANY way that they're finished or have seen enough (\"I think we've seen everything\", \"that's all\", \"that's enough\", \"leave it here\", \"we're good\", \"you've shown me enough\", \"I'm good for now\"), you MUST set `done` to true and make `text` a brief, warm sign-off. When `done` is true the session ENDS immediately after your line — so NEVER imply the demo continues and NEVER say things like \"let's carry on\".",
-    "- Take what's already been shown into account: if everything has been shown and the user sounds at all satisfied or ready to stop, prefer `done` over continuing. Do not keep the tour going when there's nothing new left and they haven't asked for more.",
+    allSeen
+      ? "- Everything has already been shown. If the user sounds at all satisfied or ready to stop, prefer `done`; don't keep the tour going when there's nothing new left."
+      : "- Some steps haven't been shown yet (see the list). Don't claim you've covered everything.",
     "- Otherwise leave `goto` empty and `done` false and just answer.",
     "",
     `WHAT IS BEING DEMOED: ${DEMO.product}`,
@@ -119,10 +128,10 @@ const REPLY_TOOL = {
       },
       goto: {
         type: "string",
-        enum: ["", "dashboard", "contacts", "pipeline", "comms"],
+        enum: ["", "dashboard", "contacts", "new-contact", "edit-contact", "pipeline", "advance-deal", "comms", "draft-email"],
         description:
-          "Set to a section id to JUMP the demo there RIGHT NOW because the user asked to go/see/skip to it. " +
-          "Empty string if the user is not asking to navigate.",
+          "Set to a STEP id (from the navigation list) to JUMP the demo there RIGHT NOW because the user asked to " +
+          "go/see/skip to/do that part. Empty string if the user is not asking to navigate.",
       },
       done: {
         type: "boolean",
@@ -165,7 +174,7 @@ app.post("/api/answer", async (req, res) => {
     let checkIn = !!tool?.input?.checkIn;
     let goto = (tool?.input?.goto || "").trim();
     let done = !!tool?.input?.done;
-    if (!["dashboard", "contacts", "pipeline", "comms"].includes(goto)) goto = "";
+    if (!NAV_IDS.includes(goto)) goto = "";
     if (!text) {
       text = msg.content.find((b) => b.type === "text")?.text?.trim() ?? "";
       checkIn = false;
