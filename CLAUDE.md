@@ -89,16 +89,23 @@ Turn-taking humano, paciente y con memoria estricta unidireccional:
   reaccione a su PROPIO eco se resuelve sin mutear, con las capas anti-eco (ver "Anti-eco").
   Umbral `BARGE_MIN_WORDS = 2` (suelo anti-ruido); un hit de 2 palabras debe persistir una
   segunda lectura (`bargePrimed`), uno de `>= BARGE_CONFIRM_WORDS` corta al instante.
-- **Interrupción + ESPERA INFINITA:** corte → pausa intencional (`ACK_DELAY`) → si el
-  usuario aún no ha preguntado, acuse ROTADO (`ACKS`) una sola vez → **espera indefinida**,
-  NO se reanuda por timeout (no hay watchdog de silencio). El acuse se reprograma con cada
-  habla del usuario (`rescheduleQuiet`) para no cortarle. Si interrumpe con la pregunta del
-  tirón, contesta directo (sin acuse).
+- **Interrupción + ESPERA PACIENTE ESCALONADA (`onQuietBeat`):** corte → en silencio, el
+  agente escala como una persona en vez de esperar infinito o reanudar de golpe. Toque 1
+  (tras `ACK_DELAY`): invita la pregunta (`ACKS`, "what's your question?"). Toque 2 (tras
+  `QUIET_DELAY`): la re-pregunta (`REPROMPTS`, "sorry, what was it?"). Toque 3: da por hecho
+  que no hay pregunta, dice una frase de cierre (`GIVEUPS`) y reanuda (esa frase SUSTITUYE a
+  la transición). El contador es `state.quietBeats`; cada habla del usuario reprograma el
+  temporizador (`rescheduleQuiet`) para no cortarle. Si interrumpe con la pregunta del tirón,
+  contesta directo. **Excepción — PAUSA (`one moment`, `acceptPause`):** marca la espera como
+  `waitingFor="pause"`, que NO tiene temporizador → se espera indefinidamente (una pausa no es
+  una pregunta pendiente). Si nuestra PROPIA respuesta acaba preguntando algo
+  (`endsWithQuestion`), no reanudamos: `holdForReply` espera su réplica con la misma escalación.
 - **Bucle Q&A con validación CONDICIONAL (la decide el cerebro):** tras responder, la
-  pregunta de validación ROTADA (`VALIDATIONS`) se hace SOLO si aporta. `answerQuestion` la
-  omite y reanuda directo cuando: la intervención fue un comentario puro (`isPureComment`), la
-  respuesta ya acaba en pregunta (`endsWithQuestion`, evita apilar dos preguntas), o el cerebro
-  marcó `checkIn=false`. Si se hace, la validación es siempre un CHEQUEO DE CLARIDAD coherente:
+  pregunta de validación ROTADA (`VALIDATIONS`) se hace SOLO si aporta. Si la respuesta acaba
+  en pregunta (`endsWithQuestion`) → `holdForReply` (esperar su réplica, NO reanudar ni apilar
+  validación). Si no, `answerQuestion` omite la validación y reanuda directo cuando: la
+  intervención fue un comentario puro (`isPureComment`) o el cerebro marcó `checkIn=false`.
+  Si se hace, la validación es siempre un CHEQUEO DE CLARIDAD coherente:
   aprobación (`APPROVE`/`CLOSE`/`RESUME`/`CONTINUE`) → reanuda; negación (`DENY`) → `clarify()`
   (`CLARIFIES`); otra pregunta → responde y re-evalúa. El pool `VALIDATIONS` NO debe mezclar
   sondeos tipo "any other questions?" (ahí "no" significaría "sigue", invirtiendo el routing y

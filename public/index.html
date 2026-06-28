@@ -124,32 +124,14 @@
         </section>
       </main>
 
-      <!-- The voice guide control + status panel (unchanged contract: app.js needs these ids) -->
-      <aside class="guide">
-        <div class="guide-head">
-          <span id="orb" class="orb idle"></span>
-          <div>
-            <div class="guide-title">Voice Guide</div>
-            <div id="status" class="status">Idle</div>
-          </div>
-        </div>
-
-        <div class="controls">
-          <button id="startBtn" class="primary">Start demo</button>
-          <button id="nextBtn" disabled>Next step</button>
-          <button id="repeatBtn" disabled>Repeat</button>
-          <button id="stopBtn" disabled>Stop</button>
-        </div>
-
-        <p class="hint">
-          The guide drives the CRM itself, like a real person — the cursor glides over, clicks,
-          types, and opens menus. Speak any time and it stops to listen, then picks up where it
-          left off. Go quiet and it'll check whether you want it to carry on. Say "next" to skip
-          ahead or "stop" to end. Tip: use headphones so it doesn't hear its own voice.
-        </p>
-
-        <div class="transcript" id="transcript" aria-live="polite"></div>
-      </aside>
+      <!-- Floating voice-agent controls (top-right). Keeps the ids app.js needs. -->
+      <div class="agent-dock">
+        <span id="orb" class="orb idle" title="Voice agent"></span>
+        <button id="startBtn" class="dock-btn primary">Start</button>
+        <button id="continueBtn" class="dock-btn" disabled>Continue</button>
+        <button id="repeatBtn" class="dock-btn" disabled>Repeat</button>
+        <button id="stopBtn" class="dock-btn" disabled>Stop</button>
+      </div>
     </div>
 
     <!-- Edit / new contact modal -->

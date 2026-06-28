@@ -28,7 +28,7 @@ const els = {
   orb: document.getElementById("orb"),
   transcript: document.getElementById("transcript"),
   startBtn: document.getElementById("startBtn"),
-  nextBtn: document.getElementById("nextBtn"),
+  continueBtn: document.getElementById("continueBtn"),
   repeatBtn: document.getElementById("repeatBtn"),
   stopBtn: document.getElementById("stopBtn"),
 };
@@ -45,7 +45,8 @@ const state = {
   sessionActive: false,
   userTurn: false,    // the user has the floor
   waitingFor: null,   // "question" (after an interruption) | "validation" (Q&A loop) | null
-  acked: false,       // have we already acknowledged this interruption?
+  acked: false,       // have we already acknowledged this interruption? (pause/validation holds)
+  quietBeats: 0,      // silence nudges spoken while waiting for a question (escalates: ask, re-ask, carry on)
   gen: 0,             // turn generation; bumping it invalidates any in-flight speak sequence
   ackTimer: null,
   echoWords: [],      // normalized words of what the agent is saying RIGHT NOW (anti-echo ref)
@@ -65,6 +66,7 @@ let DG_MODEL = "nova-3"; // Deepgram model, set from /api/ear at init
 
 // ---- Conversational timing + phrase pools ------------------------------------
 const ACK_DELAY = [900, 1800];  // intentional human pause before acknowledging an interruption
+const QUIET_DELAY = [4000, 6000]; // silence to tolerate before the next nudge while awaiting a question
 const BARGE_MIN_WORDS = 2;      // VAD floor: ignore <2-word fragments (noise / garbled pickup)
 const BARGE_CONFIRM_WORDS = 3;  // >= this many words cuts in instantly; 2 words must persist a tick
 const STEP_GAP = 800;           // pause between steps
@@ -72,10 +74,23 @@ const ECHO_TAIL_MS = 1200;      // keep filtering echo this long after audio sto
 const ECHO_MIN_RUN = 3;         // a verbatim run of >= this many of OUR words back == speaker echo
 
 const ACKS = [
+  "Of course — what's your question?",
   "Sure, go ahead.",
-  "I'm listening.",
-  "Go ahead with your question.",
-  "Of course — tell me.",
+  "Go ahead, I'm listening.",
+  "Sure — what would you like to ask?",
+];
+// Said on the NEXT silence after we already invited the question once — a gentle re-ask.
+const REPROMPTS = [
+  "Sorry — what was your question?",
+  "Go ahead, what did you want to ask?",
+  "I'm still here — what's on your mind?",
+];
+// Said after a SECOND silence: assume the question's gone and carry on. This REPLACES the
+// usual transition line, so we resume without speaking another one on top of it.
+const GIVEUPS = [
+  "No question? No worries — I'll carry on, just jump in when it comes to you.",
+  "Alright, all good — let's keep going.",
+  "Okay, I'll continue — stop me anytime.",
 ];
 // CLARITY checks only — every one means the same thing, so "no" is unambiguous: it always
 // means "not clear -> clarify". (Do NOT add "any other questions?"-style prompts here: there
@@ -103,13 +118,13 @@ const FAREWELLS = [
   "My pleasure. Take care!",
   "Glad I could help. Have a good one!",
 ];
-// Empathetic reaction when the user just asks for a moment — accept the pause and wait.
-// Deliberately NOT phrased as "go ahead, ask me": they asked for time, not an invitation.
+// When the user asks for a moment, react like a person: accept the pause AND gently ask
+// what they need, then WAIT (indefinitely) for their question — never resume on our own.
 const PAUSES = [
-  "Sure, take your time.",
-  "Of course — no rush.",
-  "Take your time, I'm here.",
-  "No problem, I'll wait.",
+  "Sure — what's up?",
+  "Of course. What's on your mind?",
+  "No rush — what would you like to know?",
+  "Sure thing. What is it?",
 ];
 
 // Pick from a pool without ever repeating the previous choice.
@@ -130,21 +145,24 @@ const pickClarify = makeRotator(CLARIFIES);
 const pickTransition = makeRotator(TRANSITIONS);
 const pickFarewell = makeRotator(FAREWELLS);
 const pickPause = makeRotator(PAUSES);
+const pickReprompt = makeRotator(REPROMPTS);
+const pickGiveUp = makeRotator(GIVEUPS);
 
 const randInt = (lo, hi) => Math.floor(lo + Math.random() * (hi - lo + 1));
 
 // ---- UI helpers ---------------------------------------------------------------
 function setMode(mode, statusText) {
   state.mode = mode;
-  els.orb.className = "orb " + (mode === "idle" ? "idle" : mode);
-  els.status.textContent = statusText || mode;
-  els.nextBtn.disabled = !state.sessionActive;
+  if (els.orb) els.orb.className = "orb " + (mode === "idle" ? "idle" : mode);
+  if (els.status) els.status.textContent = statusText || mode;
+  els.continueBtn.disabled = !state.sessionActive;
   els.repeatBtn.disabled = !state.sessionActive;
   els.stopBtn.disabled = !state.sessionActive;
   els.startBtn.disabled = state.sessionActive;
 }
 
 function addMsg(who, text) {
+  if (!els.transcript) return; // transcript panel removed from the UI — nothing to show
   const div = document.createElement("div");
   div.className = "msg " + (who === "You" ? "user" : "guide");
   div.innerHTML = `<span class="who">${who}</span>${escapeHtml(text)}`;
@@ -194,7 +212,7 @@ function speak(text) {
       let reason = "audio playback error";
       try { reason = (await (await fetch(url)).text()).slice(0, 140) || reason; } catch {}
       console.error("Voice failed:", reason, "— check ELEVENLABS_API_KEY in .env and the server log.");
-      els.status.textContent = "No voice: " + reason;
+      if (els.status) els.status.textContent = "No voice: " + reason;
       done();
     }, { once: true });
     audio.play().catch(done);
@@ -275,6 +293,7 @@ function endUserTurn() {
   state.userTurn = false;
   state.waitingFor = null;
   state.acked = false;
+  state.quietBeats = 0;
   state.bargePrimed = false;
   clearTurnTimers();
 }
@@ -416,14 +435,17 @@ async function repeatStep() {
   startRun();
 }
 
-// ---- Interruption handling (empathetic, infinite-wait turn-taking) ------------
-// (Re)start the "user has gone quiet" countdown: only after they pause for ACK_DELAY
-// do we acknowledge — and only once. Called again on each word so we never cut in early.
+// ---- Interruption handling (empathetic, patient turn-taking) ------------------
+// (Re)start the "user has gone quiet" countdown. The first beat waits a short human pause
+// (ACK_DELAY); later beats tolerate more silence (QUIET_DELAY) before nudging again. Called
+// on each word the user says so we never cut in early. Only runs in the "question" wait —
+// a "pause" wait ("one moment") deliberately has no timer (we wait as long as they need).
 function rescheduleQuiet() {
-  if (state.acked || state.waitingFor !== "question") return;
+  if (state.waitingFor !== "question") return;
   clearTurnTimers();
   const g = state.gen;
-  state.ackTimer = setTimeout(() => onAckTimeout(g), randInt(ACK_DELAY[0], ACK_DELAY[1]));
+  const [lo, hi] = state.quietBeats === 0 ? ACK_DELAY : QUIET_DELAY;
+  state.ackTimer = setTimeout(() => onQuietBeat(g), randInt(lo, hi));
 }
 
 // The user took the floor (barged in over the agent): stop, snapshot is already kept in
@@ -432,6 +454,7 @@ function onUserBargeIn() {
   state.userTurn = true;
   state.waitingFor = "question";
   state.acked = false;
+  state.quietBeats = 0;                   // fresh escalation budget for this interruption
   state.bargePrimed = false;              // we committed — clear the debounce
   bumpGen();                              // invalidate in-flight answer/ack/transition awaits
   stopAudio();                            // VAD: never talk over the user
@@ -439,15 +462,24 @@ function onUserBargeIn() {
   rescheduleQuiet();
 }
 
-// Fires only if the user interrupted but then said nothing yet: acknowledge once, then
-// wait forever for the real question (NO timeout-based resume).
-async function onAckTimeout(g) {
-  if (g !== state.gen || !state.sessionActive || state.waitingFor !== "question" || state.acked) return;
+// Fires after the user has been silent during a question wait. Escalate like a patient
+// human: beat 1 invites the question, beat 2 gently re-asks, beat 3 assumes there's no
+// question and carries on. Each spoken beat re-arms the next; the user speaking cancels it.
+async function onQuietBeat(g) {
+  if (g !== state.gen || !state.sessionActive || state.waitingFor !== "question") return;
+  const beat = ++state.quietBeats;
   setMode("answering", "…");
-  await speak(pickAck());
+  if (beat >= 3) {
+    await speak(pickGiveUp());
+    if (g !== state.gen || !state.sessionActive) return;
+    endUserTurn();
+    if (state.stepIndex >= DEMO.steps.length) return enterListening();
+    return startRun(); // the give-up line WAS the transition — resume without another one
+  }
+  await speak(beat === 1 ? pickAck() : pickReprompt());
   if (g !== state.gen || !state.sessionActive) return;
-  state.acked = true;
-  setMode("listening", "Listening — go ahead");
+  setMode("listening", beat === 1 ? "Listening — go ahead" : "Listening — still here");
+  rescheduleQuiet();
 }
 
 // Shared core for "the user spoke but there's no question to answer yet": say a short
@@ -465,16 +497,31 @@ async function passiveHold(pickPhrase, listenMsg) {
   setMode("listening", listenMsg);
 }
 
-// An unfinished opener ("um…", "what if…", "I have a question"). Invite them to finish.
+// An unfinished opener during a VALIDATION wait ("um…"): invite them to finish, stay in
+// validation (don't escalate or switch phase).
 function passiveAck() {
   const msg = state.waitingFor === "validation" ? "Listening — does that help?" : "Listening — go ahead";
   return passiveHold(pickAck, msg);
 }
 
-// An explicit request for TIME ("hold on", "one moment", "let me think"). The right
-// human reaction is to accept the pause — NOT to invite a question or validate anything.
+// The user announced a question but hasn't asked it yet ("I have a question", "excuse me,
+// I have a question", "what if…"). Invite it right away (beat 1), then escalate on silence:
+// re-ask, then assume there's no question and carry on. This is the human "oh, what's up?"
+// that waits for the question instead of barreling on.
+function promptForQuestion() {
+  state.userTurn = true;
+  state.waitingFor = "question";
+  state.quietBeats = 0;
+  clearTurnTimers();
+  return onQuietBeat(state.gen); // speak the invite now, then arm the silence escalation
+}
+
+// An explicit request for TIME ("hold on", "one moment", "give me a sec"). React like a
+// person: accept the pause and gently ask what they need, then WAIT — a pause is NOT a
+// pending question, so we mark the wait "pause" to suppress the silence escalation entirely.
 function acceptPause() {
-  return passiveHold(pickPause, "Listening — take your time");
+  state.waitingFor = "pause";
+  return passiveHold(pickPause, "Listening — go ahead");
 }
 
 // ---- Q&A loop -----------------------------------------------------------------
@@ -516,13 +563,24 @@ async function answerQuestion(text) {
   await speak(answer); // interruptible: the user can ask a follow-up over the answer
   if (g !== state.gen || !state.sessionActive) return;
 
-  // Validation is now CONDITIONAL, not mandatory — the brain decides per answer whether a
-  // closing check helps (checkIn), so we don't interrogate the user every single turn. We
-  // skip the check (and just carry on) when: it was a reactive comment with no doubt to
-  // resolve, OR the answer already ends by asking the user something (asking again would
-  // stack two questions), OR the brain judged a check-in wouldn't add anything.
-  if (isPureComment(text) || endsWithQuestion(answer) || !checkIn) resumeOrFinish();
+  // If our OWN answer ended by asking the user something, we must wait for their reply —
+  // NOT resume the demo (the old bug: "what's your question?" then "let's continue") and not
+  // stack a validation. Otherwise validation is conditional: skip it (and carry on) for a
+  // reactive comment or when the brain saw no need to check in; else do a clarity check.
+  if (endsWithQuestion(answer)) holdForReply(g);
+  else if (isPureComment(text) || !checkIn) resumeOrFinish();
   else await askValidation(g);
+}
+
+// Our spoken answer ended by asking the user something, so hold the floor and wait for their
+// reply (with the same gentle escalation) instead of resuming the demo on our own.
+function holdForReply(g) {
+  if (g !== state.gen || !state.sessionActive) return;
+  state.userTurn = true;
+  state.waitingFor = "question";
+  state.quietBeats = 1; // the answer's own question already served as the first invite
+  setMode("listening", "Listening — go ahead");
+  rescheduleQuiet();
 }
 
 // True if the spoken answer already ends by asking the user something — then a separate
@@ -615,11 +673,17 @@ const FAREWELL = /\b(bye|goodbye|good bye|see (you|ya)|gotta go|i['’]?m done|w
 // An explicit request for TIME — the whole utterance is just "hold on / one moment /
 // let me think" with nothing else. Anchored to the end so "hold on, what does this do?"
 // is NOT treated as a pause (it carries a real question) and falls through to Q&A.
-const PAUSE = /^(wait|hold on|hang on( a (sec|second|moment))?|one (sec(ond)?|moment|minute)|just a (sec(ond)?|moment|minute)|give me a (sec(ond)?|moment|minute)|gimme a (sec(ond)?|moment)|a (sec(ond)?|moment|minute)|let me (think|see|check)( (this|that|it) (out|over))?)( please)?[\s.,!?]*$/;
+const PAUSE = /^(please\s+)?((wait|hold on|hold up|hang on)|((wait|hold on|hold up|hang on|just|give me|gimme|let me have|lemme have|i(?:'| a)?\s*(?:just\s+)?need)\s+)*(a|one|1|two|2|a couple(?: of)?|a few)\s+(sec(?:ond)?s?|min(?:ute)?s?|moment|bit)|let me (?:think|see|check|have a look|take a look)(?: (?:this|that|it) (?:out|over))?)( please)?[\s.,!?]*$/;
 // A pure filler / unfinished opener with NOTHING substantive after it ("um…", "what
 // if…", "I have a question"). Anchored to the whole utterance so real questions that
 // merely START with one of these ("what if I forget my password?") are NOT caught.
-const INCOMPLETE = /^(u+m+|u+h+|h+m+|e+r+|so|well|okay so|actually|i mean|like|and|but|what if|and if|so if|i have (a|another) question|i'?ve got a question|quick question|can i ask( something| you)?|may i ask|let me ask)[\s.,!?]*$/;
+// Polite/filler lead-ins we strip before judging intent ("excuse me, …", "sorry, …").
+const PREFIX = /^(?:(?:excuse me|sorry|pardon(?: me)?|hey|hi|hello|um+|uh+|er+|hm+|okay|ok|so|well|actually)[\s,]+)+/;
+const INCOMPLETE = /^(u+m+|u+h+|h+m+|e+r+|so|well|okay so|actually|i mean|like|and|but|what if|and if|so if|i(?:'?ve| have| had| got|'?ve got| have got)?\s*(?:a |another )?(?:quick )?questions?|quick question|(?:a )?question(?: for you)?|can i ask(?: you)?(?: something)?|could i ask|may i ask|let me ask)[\s.,!?]*$/;
+// True for an announced-but-unasked question or unfinished opener — the WHOLE utterance
+// (after any polite prefix) with nothing substantive after it. Anchored so a real question
+// that merely starts this way ("what if I forget my password?") is NOT caught.
+function isIncomplete(lc) { return INCOMPLETE.test(lc.replace(PREFIX, "")); }
 // A purely reactive comment with no doubt in it ("oh nice", "that's clever"). After one
 // of these there is nothing to validate, so we just carry on. EVERYTHING else we answered
 // is treated as a real doubt, so validation (Estado 3) is mandatory before advancing.
@@ -665,9 +729,15 @@ function handleUtterance(text) {
   // Semantic routing while we hold the floor open. A request for TIME gets an empathetic
   // "take your time" (NOT a Q&A invite); an unfinished question opener gets a passive
   // "go ahead". Neither is sent to the brain — listening actively beats guessing.
+  // A pure request for time is ALWAYS a "wait" — never a question to answer and never a
+  // reason to resume — so honor it whether or not we already hold the floor.
+  if (PAUSE.test(lc)) return acceptPause();
   const holding = state.userTurn || state.mode === "listening";
-  if (holding && PAUSE.test(lc)) return acceptPause();
-  if (holding && INCOMPLETE.test(lc)) return passiveAck();
+  // An announced-but-unasked question ("I have a question", "um…"): in a validation wait keep
+  // the old passive nudge; otherwise invite it and patiently wait (re-ask, then carry on).
+  if (holding && isIncomplete(lc)) {
+    return state.waitingFor === "validation" ? passiveAck() : promptForQuestion();
+  }
 
   if (state.waitingFor === "validation") {
     if (RESUME.test(lc) || CONTINUE.test(lc) || CLOSE.test(lc) || APPROVE.test(lc)) return resumeOrFinish();
@@ -839,7 +909,7 @@ async function startEar() {
   if (state.sttEngine === "deepgram") {
     if (await startDeepgramEar()) return true;
     state.sttEngine = "browser"; // proxy socket failed -> degrade for the rest of the session
-    els.status.textContent = "Using browser speech recognition (Deepgram unavailable)";
+    if (els.status) els.status.textContent = "Using browser speech recognition (Deepgram unavailable)";
   }
   browserRec = setupBrowserRecognition();
   if (!browserRec) {
@@ -916,7 +986,7 @@ function stopDemo() {
 
 // ---- Wire up ------------------------------------------------------------------
 els.startBtn.addEventListener("click", startDemo);
-els.nextBtn.addEventListener("click", () => state.sessionActive && nextStep());
+els.continueBtn.addEventListener("click", () => state.sessionActive && resumeDemo());
 els.repeatBtn.addEventListener("click", () => state.sessionActive && repeatStep());
 els.stopBtn.addEventListener("click", stopDemo);
 
