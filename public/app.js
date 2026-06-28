@@ -175,9 +175,10 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function highlightField(fieldId) {
+// Visual step highlight removed by request — keep the function as a no-op so the existing
+// call sites stay valid. (We clear any stray highlight class just in case.)
+function highlightField() {
   document.querySelectorAll(".highlight").forEach((e) => e.classList.remove("highlight"));
-  if (fieldId) document.getElementById(fieldId)?.classList.add("highlight");
 }
 
 // ---- Voice output (ElevenLabs via our /api/tts) -------------------------------
@@ -315,29 +316,46 @@ function startRun() {
   runSteps(g);
 }
 
+// Jump the demo to a section the user asked for by voice and run it from the top of that
+// step (it narrates the section, clicks its nav tab, and performs its actions).
+function goToSection(id) {
+  const idx = DEMO.steps.findIndex((s) => s.id === id);
+  if (idx < 0 || !state.sessionActive) return;
+  if (typeof window.__closeModals === "function") window.__closeModals(); // dismiss any open dialog
+  endUserTurn();
+  state.stepIndex = idx;
+  state.actionIndex = 0;
+  state.narrated = false;
+  startRun();
+}
+
 async function runSteps(g) {
   while (alive(g) && state.stepIndex < DEMO.steps.length) {
     const step = DEMO.steps[state.stepIndex];
-    highlightField(step.field);
 
-    // Narration: re-narrated only if it was never completed (interrupted mid-sentence).
+    // Narration and actions run TOGETHER, so the guide talks WHILE it acts (e.g. says
+    // "let me add a contact" as the cursor clicks New contact). Narration is (re)spoken only
+    // if it wasn't completed before; `narrated` flips the instant the speech finishes —
+    // independent of the actions — so a later interruption doesn't force a re-narration.
+    const actions = step.actions || (step.action ? [step.action] : []);
+    let narrating = Promise.resolve();
     if (!state.narrated) {
       addMsg("Guide", step.narration);
       setMode("narrating", `Step ${state.stepIndex + 1}/${DEMO.steps.length}`);
-      await speak(step.narration);
-      if (!alive(g)) return; // interrupted -> narrated stays false, re-narrate on resume
-      state.narrated = true;
+      narrating = speak(step.narration).then(() => { if (alive(g)) state.narrated = true; });
     }
 
-    // Actions: run only the not-yet-completed ones. A completed action's index is
-    // advanced and NEVER revisited (strict, one-way progress — no refilling fields).
-    const actions = step.actions || (step.action ? [step.action] : []);
+    // Actions: run only the not-yet-completed ones, concurrently with the narration. A
+    // completed action's index is advanced and NEVER revisited (one-way progress).
     while (state.actionIndex < actions.length) {
       if (!alive(g)) return;
       await runAction(actions[state.actionIndex]);
       if (!alive(g)) return; // interrupted mid-action -> keep index, re-run just this one
       state.actionIndex++;
     }
+
+    await narrating;       // let any remaining narration finish before advancing
+    if (!alive(g)) return; // interrupted during narration -> narrated stays false, re-narrate
 
     // Step fully done -> advance the checkpoint to the next step.
     state.stepIndex++;
@@ -702,6 +720,32 @@ function isMeaningfulShort(lc) {
     PAUSE.test(lc); // a lone "wait" is a deliberate stop signal, not noise
 }
 
+// Voice-driven navigation: "show me communications", "go to the pipeline", "no, take me to
+// the dashboard" — or just a bare section name. Lets the user steer the demo to any section.
+const NAV_VERB = /\b(go(?: back)? to|goto|show me|show|take me to|open|navigate to|jump to|switch to|bring up|move to|head to|let'?s (?:go to|see|look at)|back to)\b/;
+const NAV_SECTIONS = [
+  { id: "dashboard", re: /\b(dashboard|home|overview|the numbers|metrics|kpis?)\b/,
+    bare: /^(?:the\s+)?(dashboard|home|overview|metrics|kpis?)[\s.!?]*$/ },
+  { id: "contacts",  re: /\b(contacts?|people|the list)\b/,
+    bare: /^(?:the\s+)?(contacts?|people)[\s.!?]*$/ },
+  { id: "pipeline",  re: /\b(pipeline|opportunit(?:y|ies)|deals?|the board|kanban)\b/,
+    bare: /^(?:the\s+)?(pipeline|opportunit(?:y|ies)|deals?|kanban|board)[\s.!?]*$/ },
+  { id: "comms",     re: /\b(communications?|comms|emails?|messaging|messages|outreach)\b/,
+    bare: /^(?:the\s+)?(communications?|comms|emails?|messaging|messages|outreach)[\s.!?]*$/ },
+];
+// Returns the target section id, or null if this isn't a navigation request. With a nav verb
+// ("show me X", "go to X") any section mention counts; without one, only a BARE section name
+// ("communications", "the pipeline") does — so "draft an email" / "add a contact" don't jump.
+function navTarget(lc) {
+  const hasVerb = NAV_VERB.test(lc);
+  if (!hasVerb && /\b(what|what'?s|whats|why|how|when|where|who|which|is|are|does|do|tell|explain)\b/.test(lc)) return null;
+  for (const s of NAV_SECTIONS) {
+    if (!s.re.test(lc)) continue;
+    if (hasVerb || s.bare.test(lc)) return s.id;
+  }
+  return null;
+}
+
 // Route a finished user utterance: stop the agent if needed, then command / Q&A / resume.
 function handleUtterance(text) {
   const lc = text.toLowerCase();
@@ -721,6 +765,10 @@ function handleUtterance(text) {
   if (FAREWELL.test(lc)) return farewell(); // a goodbye is terminal — never route it into Q&A
   if (COMMANDS.next.test(lc)) return nextStep();
   if (COMMANDS.repeat.test(lc)) return repeatStep();
+
+  // "go to communications", "show me the pipeline", "no, back to the dashboard" — jump there.
+  const nav = navTarget(lc);
+  if (nav) return goToSection(nav);
 
   // End of the demo: the user is answering "anything else?". A closing/negative ENDS the
   // session (no more "any other questions?" loop); a real question still gets answered below.

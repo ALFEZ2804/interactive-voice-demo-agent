@@ -15,7 +15,7 @@
           <div class="crm-brand"><span class="crm-dot"></span> Pipeline CRM</div>
           <button type="button" class="nav-item active" id="nav-dashboard" data-view="dashboard">Dashboard</button>
           <button type="button" class="nav-item" id="nav-contacts" data-view="contacts">Contacts</button>
-          <button type="button" class="nav-item" id="nav-pipeline" data-view="pipeline">Opportunities</button>
+          <button type="button" class="nav-item" id="nav-pipeline" data-view="pipeline">Pipeline</button>
           <button type="button" class="nav-item" id="nav-comms" data-view="comms">Communications</button>
         </nav>
 
@@ -58,7 +58,7 @@
           <!-- ===== OPPORTUNITIES (PIPELINE) ===== -->
           <div class="view" id="view-pipeline">
             <div class="view-head">
-              <h2>Opportunities</h2>
+              <h2>Pipeline</h2>
               <p>Deals by stage.</p>
             </div>
             <div class="pipeline-board" id="pipeline-board"><!-- rendered by JS --></div>
@@ -237,6 +237,7 @@
 
       // ---- View switching (single page, no navigation) ------------------------
       function showView(name) {
+        closeContactModal(); // navigating away dismisses any open dialog, like a real app
         document.querySelectorAll(".view").forEach(function (v) { v.classList.toggle("active", v.id === "view-" + name); });
         document.querySelectorAll(".nav-item").forEach(function (n) { n.classList.toggle("active", n.dataset.view === name); });
         if (name === "comms") buildContactDropdown();
@@ -291,6 +292,7 @@
         modal.classList.add("open");
       }
       function closeContactModal() { document.getElementById("contact-modal").classList.remove("open"); }
+      window.__closeModals = closeContactModal; // app.js closes stray dialogs on voice navigation
 
       document.getElementById("btn-new-contact").addEventListener("click", function () { openContactModal(-1); });
       document.getElementById("cm-cancel").addEventListener("click", closeContactModal);
