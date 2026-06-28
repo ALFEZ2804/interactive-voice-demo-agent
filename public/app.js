@@ -400,17 +400,18 @@ function doneIndex() {
   return i >= 0 ? i : DEMO.steps.length - 1;
 }
 
-// Make sure a SUB-step's section view is active before its actions run — its actions assume it
-// (e.g. "new contact" needs the Contacts view; otherwise the modal opens over the wrong tab).
-// Section-overview steps switch the view themselves via their visible nav-tab click, so they're
-// skipped here. A no-op when already on the right view; a switch also closes any stray modal.
-function ensureStepView(step) {
+// Make sure a SUB-step's section view is active before its actions run — and do it VISIBLY:
+// glide the cursor to the nav tab and click it (not an instant snap), so returning to a
+// section looks like real navigation. Its actions assume the right view (e.g. "new contact"
+// needs the Contacts view). Overview steps switch the view via their own visible nav-click
+// action, so they're skipped. No-op when already on the right view; the click closes any modal.
+async function ensureStepView(step, g) {
   const sec = step && STEP_SECTION[step.id];
   if (!sec || sec === step.id) return;
   const av = document.querySelector(".view.active");
   if (av && av.id === "view-" + sec) return;
   const nav = document.getElementById("nav-" + sec);
-  if (nav) nav.click();
+  if (nav) await Human.click(nav, { keepGoing: () => alive(g) });
 }
 
 // Next step to run after finishing `step`: FINISH the current section first (so jumping to a
@@ -439,12 +440,12 @@ function sectionTransition(secId, seenBefore) {
 
 // Jump the demo to a specific STEP the user asked for — a section overview ("show me the
 // pipeline") OR a sub-action ("no, edit the contact instead"). For a sub-step we first switch
-// to its section's view (the nav click also closes any open modal), then run from that step.
+// then run from that step. The view switch (visible nav-tab click) happens in runSteps so the
+// cursor is seen navigating; here we only dismiss any open modal first.
 function goToStep(id) {
   const idx = DEMO.steps.findIndex((s) => s.id === id);
   if (idx < 0 || !state.sessionActive) return;
   if (typeof window.__closeModals === "function") window.__closeModals();
-  ensureStepView(DEMO.steps[idx]); // a sub-step jump: switch to its view first
   stopAudio();   // cut any current narration so it doesn't overlap the jump
   endUserTurn();
   state.stepIndex = idx;
@@ -473,7 +474,8 @@ async function runSteps(g) {
     if (sec) state.lastSection = sec;
 
     markVisited(state.stepIndex); // remember this step was shown (even if later interrupted)
-    ensureStepView(step); // sub-steps reached by advancement (after a jump) need their view too
+    await ensureStepView(step, g); // visibly click the nav tab if a sub-step needs its view
+    if (!alive(g)) return;
 
     // Narration and actions run TOGETHER, so the guide talks WHILE it acts (e.g. says
     // "let me add a contact" as the cursor clicks New contact). Narration is (re)spoken only
