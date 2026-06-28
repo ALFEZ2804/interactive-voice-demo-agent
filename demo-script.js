@@ -127,8 +127,7 @@ export const DEMO = {
       id: "comms",
       field: "comms-panel",
       narration:
-        "And here's the part I like most — communications. It writes your follow-up emails " +
-        "for you.",
+        "And here's the part I like most. It writes your follow-up emails for you.",
       action: { type: "click", field: "nav-comms" },
       context:
         "The Communications view drafts a follow-up email for a chosen contact using AI. You " +
@@ -138,9 +137,12 @@ export const DEMO = {
     {
       id: "draft-email",
       field: "comms-panel",
+      // Default (works in any order). `narrationAfterAdd` is used instead ONLY when the user
+      // has been through "add a contact", so referencing it ("the contact I just added") is true.
       narration:
-        "Watch — I'll pick the contact I just added and have it write a follow-up. It's " +
-        "drafting it now.",
+        "Watch — I'll pick a contact and have it write a follow-up. It's drafting it now.",
+      narrationAfterAdd:
+        "Watch — I'll pick the contact I just added and have it write a follow-up. It's drafting it now.",
       actions: [
         { type: "pick", field: "dd-comms-contact", value: "Elena Ortiz" },
         { type: "click", field: "btn-draft" },

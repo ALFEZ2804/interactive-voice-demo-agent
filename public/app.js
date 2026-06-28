@@ -49,6 +49,7 @@ const state = {
   quietBeats: 0,      // silence nudges spoken while waiting for a question (escalates: ask, re-ask, carry on)
   visited: {},        // sections already shown {dashboard,contacts,pipeline,comms} -> true (demo memory)
   checkinStyle: "clarity", // which post-answer check-in was asked: "more" | "confirm" | "clarity" (routes yes/no)
+  lastSection: null,  // section of the last step we narrated (to add a lead-in when it changes)
   gen: 0,             // turn generation; bumping it invalidates any in-flight speak sequence
   ackTimer: null,
   echoWords: [],      // normalized words of what the agent is saying RIGHT NOW (anti-echo ref)
@@ -412,6 +413,30 @@ function ensureStepView(step) {
   if (nav) nav.click();
 }
 
+// Next step to run after finishing `step`: FINISH the current section first (so jumping to a
+// section runs all of its steps), then fall back to the first unseen step of any section. -1
+// once everything's been shown. Keeps a section from being left half-done after a jump.
+function nextStepIndex(step) {
+  const sec = STEP_SECTION[step.id];
+  if (sec) {
+    const i = DEMO.steps.findIndex((s) => STEP_SECTION[s.id] === sec && !state.visited[s.id]);
+    if (i >= 0) return i;
+  }
+  return nextUnvisitedStep();
+}
+
+// A short, natural lead-in spoken when the tour crosses into a different section ("Let's head
+// over to the pipeline" / "Okay, back to contacts" when returning).
+const SECTION_LABEL = { dashboard: "the dashboard", contacts: "contacts", pipeline: "the pipeline", comms: "communications" };
+const LEADIN_NEW = ["Now, let's head over to {x}.", "Next, let's look at {x}.", "Okay, on to {x}.", "Let's move over to {x}."];
+const LEADIN_BACK = ["Let's head back to {x}.", "Okay, back to {x}.", "Let's pop back to {x}."];
+const pickLeadinNew = makeRotator(LEADIN_NEW);
+const pickLeadinBack = makeRotator(LEADIN_BACK);
+function sectionTransition(secId, seenBefore) {
+  const x = SECTION_LABEL[secId] || "it";
+  return (seenBefore ? pickLeadinBack() : pickLeadinNew()).replace("{x}", x);
+}
+
 // Jump the demo to a specific STEP the user asked for — a section overview ("show me the
 // pipeline") OR a sub-action ("no, edit the contact instead"). For a sub-step we first switch
 // to its section's view (the nav click also closes any open modal), then run from that step.
@@ -425,13 +450,28 @@ function goToStep(id) {
   state.stepIndex = idx;
   state.actionIndex = 0;
   state.narrated = false;
-  markVisited(idx);
+  // NOTE: don't markVisited here — runSteps marks it on entry, AFTER computing the section
+  // lead-in's "seen before?" check. Marking it now would make a first visit say "back to…".
   startRun();
 }
 
 async function runSteps(g) {
   while (alive(g) && state.stepIndex < DEMO.steps.length) {
     const step = DEMO.steps[state.stepIndex];
+    const sec = STEP_SECTION[step.id];
+
+    // Crossing into a different section -> a short, natural lead-in ("Let's head over to the
+    // pipeline" / "Okay, back to contacts"). Computed BEFORE markVisited so we can tell whether
+    // it's a first visit ("over to") or a return ("back to"). Skipped within a section and on
+    // the very first section (lastSection is null then).
+    if (sec && state.lastSection && sec !== state.lastSection && !state.narrated) {
+      const seenBefore = DEMO.steps.some((s) => STEP_SECTION[s.id] === sec && state.visited[s.id]);
+      setMode("narrating", `Step ${state.stepIndex + 1}/${DEMO.steps.length}`);
+      await speak(sectionTransition(sec, seenBefore));
+      if (!alive(g)) return;
+    }
+    if (sec) state.lastSection = sec;
+
     markVisited(state.stepIndex); // remember this step was shown (even if later interrupted)
     ensureStepView(step); // sub-steps reached by advancement (after a jump) need their view too
 
@@ -440,11 +480,14 @@ async function runSteps(g) {
     // if it wasn't completed before; `narrated` flips the instant the speech finishes —
     // independent of the actions — so a later interruption doesn't force a re-narration.
     const actions = step.actions || (step.action ? [step.action] : []);
+    // Use the "after add" line only if the user has actually been through the add-contact step,
+    // so "the contact I just added" is true; otherwise the order-independent default.
+    const line = (step.narrationAfterAdd && state.visited["new-contact"]) ? step.narrationAfterAdd : step.narration;
     let narrating = Promise.resolve();
     if (!state.narrated) {
-      addMsg("Guide", step.narration);
+      addMsg("Guide", line);
       setMode("narrating", `Step ${state.stepIndex + 1}/${DEMO.steps.length}`);
-      narrating = speak(step.narration).then(() => { if (alive(g)) state.narrated = true; });
+      narrating = speak(line).then(() => { if (alive(g)) state.narrated = true; });
     }
 
     // Actions: run only the not-yet-completed ones, concurrently with the narration. A
@@ -459,17 +502,17 @@ async function runSteps(g) {
     await narrating;       // let any remaining narration finish before advancing
     if (!alive(g)) return; // interrupted during narration -> narrated stays false, re-narrate
 
-    // Step fully done -> advance, VISITED-AWARE per step: go to the next step the user hasn't
-    // seen yet (in demo order). In a normal run that's just the next step; after a jump it
-    // doubles back to cover anything skipped. Once everything's been shown, go to the wrap-up,
-    // and after the wrap-up itself, end (never re-loop it).
+    // Step fully done -> advance. FINISH the current section first (so a jump runs the whole
+    // section), then cover the first unseen step elsewhere. In a normal run that's just the next
+    // step; after a jump it completes the section, then doubles back to anything skipped. Once
+    // everything's been shown, go to the wrap-up; after the wrap-up itself, end (never re-loop).
     const finishedId = step.id;
     state.actionIndex = 0;
     state.narrated = false;
     if (finishedId === "done") {
       state.stepIndex = DEMO.steps.length; // wrap-up shown -> end -> enterListening
     } else {
-      const j = nextUnvisitedStep();
+      const j = nextStepIndex(step);
       state.stepIndex = j >= 0 ? j : doneIndex();
     }
     if (state.stepIndex < DEMO.steps.length) {
@@ -1186,6 +1229,7 @@ async function startDemo() {
   state.actionIndex = 0;
   state.narrated = false;
   state.visited = {};
+  state.lastSection = null;
   state.sessionActive = true;
   state.paused = false;
   endUserTurn();
