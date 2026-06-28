@@ -399,6 +399,19 @@ function doneIndex() {
   return i >= 0 ? i : DEMO.steps.length - 1;
 }
 
+// Make sure a SUB-step's section view is active before its actions run — its actions assume it
+// (e.g. "new contact" needs the Contacts view; otherwise the modal opens over the wrong tab).
+// Section-overview steps switch the view themselves via their visible nav-tab click, so they're
+// skipped here. A no-op when already on the right view; a switch also closes any stray modal.
+function ensureStepView(step) {
+  const sec = step && STEP_SECTION[step.id];
+  if (!sec || sec === step.id) return;
+  const av = document.querySelector(".view.active");
+  if (av && av.id === "view-" + sec) return;
+  const nav = document.getElementById("nav-" + sec);
+  if (nav) nav.click();
+}
+
 // Jump the demo to a specific STEP the user asked for — a section overview ("show me the
 // pipeline") OR a sub-action ("no, edit the contact instead"). For a sub-step we first switch
 // to its section's view (the nav click also closes any open modal), then run from that step.
@@ -406,11 +419,7 @@ function goToStep(id) {
   const idx = DEMO.steps.findIndex((s) => s.id === id);
   if (idx < 0 || !state.sessionActive) return;
   if (typeof window.__closeModals === "function") window.__closeModals();
-  const sec = STEP_SECTION[id];
-  if (sec && sec !== id) {
-    const nav = document.getElementById("nav-" + sec);
-    if (nav) nav.click(); // sub-step: make sure its view is active first
-  }
+  ensureStepView(DEMO.steps[idx]); // a sub-step jump: switch to its view first
   stopAudio();   // cut any current narration so it doesn't overlap the jump
   endUserTurn();
   state.stepIndex = idx;
@@ -424,6 +433,7 @@ async function runSteps(g) {
   while (alive(g) && state.stepIndex < DEMO.steps.length) {
     const step = DEMO.steps[state.stepIndex];
     markVisited(state.stepIndex); // remember this step was shown (even if later interrupted)
+    ensureStepView(step); // sub-steps reached by advancement (after a jump) need their view too
 
     // Narration and actions run TOGETHER, so the guide talks WHILE it acts (e.g. says
     // "let me add a contact" as the cursor clicks New contact). Narration is (re)spoken only
@@ -559,15 +569,19 @@ async function repeatStep() {
 }
 
 // ---- Interruption handling (empathetic, patient turn-taking) ------------------
-// (Re)start the "user has gone quiet" countdown. The first beat waits a short human pause
-// (ACK_DELAY); later beats tolerate more silence (QUIET_DELAY) before nudging again. Called
-// on each word the user says so we never cut in early. Only runs in the "question" wait —
-// a "pause" wait ("one moment") deliberately has no timer (we wait as long as they need).
+// (Re)start the "user has gone quiet" countdown for BOTH waits where we expect the user to
+// speak: the post-interruption "question" wait AND the post-answer "validation" check-in. On
+// silence we escalate (nudge, then carry on) instead of waiting forever. Called on each word
+// the user says so we never cut in early. Pause requests ("one moment") also escalate now —
+// acceptPause routes them through the "question" wait so they never hang forever.
 function rescheduleQuiet() {
-  if (state.waitingFor !== "question") return;
+  if (state.waitingFor !== "question" && state.waitingFor !== "validation") return;
   clearTurnTimers();
   const g = state.gen;
-  const [lo, hi] = state.quietBeats === 0 ? ACK_DELAY : QUIET_DELAY;
+  // Only the very first beat of a question wait is quick; everything else (and every check-in
+  // beat) gives more silence before nudging.
+  const quick = state.waitingFor === "question" && state.quietBeats === 0;
+  const [lo, hi] = quick ? ACK_DELAY : QUIET_DELAY;
   state.ackTimer = setTimeout(() => onQuietBeat(g), randInt(lo, hi));
 }
 
@@ -589,7 +603,8 @@ function onUserBargeIn() {
 // human: beat 1 invites the question, beat 2 gently re-asks, beat 3 assumes there's no
 // question and carries on. Each spoken beat re-arms the next; the user speaking cancels it.
 async function onQuietBeat(g) {
-  if (g !== state.gen || !state.sessionActive || state.waitingFor !== "question") return;
+  const phase = state.waitingFor;
+  if (g !== state.gen || !state.sessionActive || (phase !== "question" && phase !== "validation")) return;
   const beat = ++state.quietBeats;
   setMode("answering", "…");
   if (beat >= 3) {
@@ -599,9 +614,11 @@ async function onQuietBeat(g) {
     if (state.stepIndex >= DEMO.steps.length) return enterListening();
     return startRun(); // the give-up line WAS the transition — resume without another one
   }
-  await speak(beat === 1 ? pickAck() : pickReprompt());
+  // Question wait: invite, then re-ask. Check-in wait: a gentle "still there?" nudge.
+  const line = phase === "validation" ? pickReprompt() : (beat === 1 ? pickAck() : pickReprompt());
+  await speak(line);
   if (g !== state.gen || !state.sessionActive) return;
-  setMode("listening", beat === 1 ? "Listening — go ahead" : "Listening — still here");
+  setMode("listening", "Listening…");
   rescheduleQuiet();
 }
 
@@ -640,11 +657,20 @@ function promptForQuestion() {
 }
 
 // An explicit request for TIME ("hold on", "one moment", "give me a sec"). React like a
-// person: accept the pause and gently ask what they need, then WAIT — a pause is NOT a
-// pending question, so we mark the wait "pause" to suppress the silence escalation entirely.
-function acceptPause() {
-  state.waitingFor = "pause";
-  return passiveHold(pickPause, "Listening — go ahead");
+// person: accept the pause and gently ask what they need, then WAIT — patiently, but NOT
+// forever. We treat it as a "question" wait whose first beat (the pause ack) we've already
+// said, so on continued silence it nudges and finally carries on, like every other wait.
+async function acceptPause() {
+  state.userTurn = true;
+  state.waitingFor = "question";
+  clearTurnTimers();
+  const g = bumpGen();
+  setMode("answering", "…");
+  await speak(pickPause()); // "Sure — what's up?"
+  if (g !== state.gen || !state.sessionActive) return;
+  state.quietBeats = 1; // the pause ack counts as the first beat (next silence -> nudge)
+  setMode("listening", "Listening — take your time");
+  rescheduleQuiet();      // silence -> gentle nudge -> graceful carry-on (no infinite wait)
 }
 
 // ---- Q&A loop -----------------------------------------------------------------
@@ -737,7 +763,9 @@ async function askCheckin(g) {
   state.waitingFor = "validation";
   state.checkinStyle = style;
   state.acked = false; // fresh passive-ack budget for this wait
+  state.quietBeats = 0;
   setMode("listening", style === "clarity" ? "Listening — does that help?" : "Listening — anything else?");
+  rescheduleQuiet(); // if they stay silent: nudge, then carry on (don't wait forever)
 }
 
 async function clarify() {
@@ -750,7 +778,9 @@ async function clarify() {
   state.userTurn = true;
   state.waitingFor = "validation"; // their next utterance is the thing to explain
   state.acked = false; // fresh passive-ack budget for this wait
+  state.quietBeats = 0;
   setMode("listening", "Listening…");
+  rescheduleQuiet(); // don't wait forever for the clarification either
 }
 
 // ---- Resume (recover checkpoint, transition, continue forward) -----------------
@@ -961,8 +991,8 @@ function onSpeech(interim, final) {
     // A clearly-real burst (>= BARGE_CONFIRM_WORDS) cuts in immediately, no delay.
     if (state.bargePrimed || wordCount(interim) >= BARGE_CONFIRM_WORDS) onUserBargeIn();
     else state.bargePrimed = true;
-  } else if (speaking && state.userTurn && state.waitingFor === "question") {
-    rescheduleQuiet(); // post-interruption wait: keep pushing the ack back while they talk
+  } else if (speaking && state.userTurn && (state.waitingFor === "question" || state.waitingFor === "validation")) {
+    rescheduleQuiet(); // question OR check-in wait: keep pushing the nudge back while they talk
   } else {
     state.bargePrimed = false; // the candidate didn't hold up — reset the debounce
   }
