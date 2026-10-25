@@ -52,4 +52,4 @@ See .env.example for the available model, voice, and server settings. Keep provi
 - The generated email is a draft preview; the app does not send it.
 - The browser speech-recognition fallback is intended for Chrome or Edge.
 
-See [QA.md](QA.md) for the manual interaction checklist and [GUIA.md](GUIA.md) for development notes.
+See [QA.md](QA.md) for the manual interaction checklist and [DEVELOPMENT.md](DEVELOPMENT.md) for development notes.
