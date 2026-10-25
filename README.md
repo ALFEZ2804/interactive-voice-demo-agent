@@ -53,3 +53,4 @@ See .env.example for the available model, voice, and server settings. Keep provi
 - The browser speech-recognition fallback is intended for Chrome or Edge.
 
 See [QA.md](QA.md) for the manual interaction checklist and [DEVELOPMENT.md](DEVELOPMENT.md) for development notes.
+For a recruiter-friendly walkthrough, see [DEMO.md](DEMO.md).
